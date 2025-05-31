@@ -1,13 +1,13 @@
 module poker::game;
 
 use sui::balance::{Self, Balance};
-use sui::coin::{Self, Coin};
+use sui::coin::Coin;
 use sui::random::{new_generator, Random};
 use sui::sui::SUI;
 
 // Constants for game configuration
 const MIN_PLAYERS: u64 = 2;
-const MAX_PLAYERS: u64 = 10;
+const MAX_PLAYERS: u64 = 8;
 const CARDS_PER_PLAYER: u64 = 2;
 const SEED_LENGTH: u64 = 32;
 
@@ -73,7 +73,6 @@ public struct PokerGame has key {
   current_player: u64,
   state: u8,
   last_raise_position: u64,
-  side_pots: vector<u64>,
   owner: address,
 }
 
@@ -81,9 +80,6 @@ public struct PokerGame has key {
 public struct GameCreated has copy, drop {
   game_id: sui::object::ID,
   buy_in: u64,
-  min_bet: u64,
-  small_blind: u64,
-  big_blind: u64,
 }
 
 public struct PlayerJoined has copy, drop {
@@ -126,9 +122,18 @@ public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
 
   let game = PokerGame {
     id,
-    players: std::vector::empty(),
-    deck: std::vector::empty(),
-    community_cards: std::vector::empty(),
+    players: vector[
+      Player {
+        addr: ctx.sender(),
+        cards: vector[],
+        balance: buy_in,
+        current_bet: 0,
+        is_folded: false,
+        is_all_in: false,
+      },
+    ],
+    deck: vector[],
+    community_cards: vector[],
     pot: balance::zero(),
     buy_in,
     min_bet,
@@ -139,17 +144,10 @@ public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
     current_player: 0,
     state: STATE_WAITING_FOR_PLAYERS,
     last_raise_position: 0,
-    side_pots: std::vector::empty(),
-    owner: sui::tx_context::sender(ctx),
+    owner: ctx.sender(),
   };
 
-  sui::event::emit(GameCreated {
-    game_id,
-    buy_in,
-    min_bet,
-    small_blind,
-    big_blind,
-  });
+  sui::event::emit(GameCreated { game_id, buy_in });
 
   sui::transfer::share_object(game);
 }
@@ -160,7 +158,7 @@ public entry fun join_game(
   payment: Coin<SUI>,
   ctx: &mut TxContext,
 ) {
-  let player_addr = sui::tx_context::sender(ctx);
+  let player_addr = ctx.sender();
 
   // Check game state
   if (game.state != STATE_WAITING_FOR_PLAYERS) {
@@ -184,28 +182,27 @@ public entry fun join_game(
   };
 
   // Check buy-in amount
-  let payment_value = coin::value(&payment);
-  if (payment_value < game.buy_in) {
+  if (payment.value() < game.buy_in) {
     abort EInsufficientBuyIn
   };
 
   // Add player to the game
   let player = Player {
     addr: player_addr,
-    cards: std::vector::empty(),
+    cards: vector[],
     balance: game.buy_in,
     current_bet: 0,
     is_folded: false,
     is_all_in: false,
   };
-  std::vector::push_back(&mut game.players, player);
+  game.players.push_back(player);
 
   // Add payment to pot
-  let payment_balance = coin::into_balance(payment);
-  balance::join(&mut game.pot, payment_balance);
+  let payment_balance = payment.into_balance();
+  game.pot.join(payment_balance);
 
   // Emit event
-  let game_id = sui::object::uid_to_inner(&game.id);
+  let game_id = game.id.to_inner();
   sui::event::emit(PlayerJoined { game_id, player: player_addr });
 }
 
@@ -265,19 +262,14 @@ entry fun start_game_with_seed(
   sui::event::emit(RoundChanged { game_id, new_state: game.state });
 }
 
-// Player actions: fold, check, call, bet, raise
-public entry fun player_action(
-  game: &mut PokerGame,
-  action: u8,
-  amount: u64,
-  ctx: &mut TxContext,
-) {
+// Helper function to validate player action prerequisites
+fun validate_player_action(game: &PokerGame, ctx: &TxContext): u64 {
   // Validate game state
   if (game.state < STATE_PRE_FLOP || game.state > STATE_RIVER) {
     abort EInvalidGameState
   };
 
-  let player_addr = sui::tx_context::sender(ctx);
+  let player_addr = ctx.sender();
   let player_count = std::vector::length(&game.players);
   let player_index = find_player_index(game, player_addr);
 
@@ -289,62 +281,21 @@ public entry fun player_action(
     abort ENotYourTurn
   };
 
-  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  let player = std::vector::borrow(&game.players, player_index);
   if (player.is_folded) {
     abort EInvalidAction
   };
 
-  // Process the action
-  if (action == ACTION_FOLD) {
-    player.is_folded = true;
-  } else if (action == ACTION_CHECK) {
-    if (game.current_bet != player.current_bet) {
-      abort EInvalidAction
-    };
-  } else if (action == ACTION_CALL) {
-    let call_amount = game.current_bet - player.current_bet;
-    if (call_amount > player.balance) {
-      abort EInvalidBet
-    };
-    player.balance = player.balance - call_amount;
-    player.current_bet = game.current_bet;
-    if (player.balance == 0) {
-      player.is_all_in = true;
-    }
-  } else if (action == ACTION_BET || action == ACTION_RAISE) {
-    // For a bet, there should be no current bet
-    if (action == ACTION_BET) {
-      if (game.current_bet != 0) {
-        abort EInvalidAction
-      };
-    } else {
-      // For a raise, there should be a current bet and the raise should be at least min_bet
-      if (game.current_bet == 0) {
-        abort EInvalidAction
-      };
-      if (amount < game.current_bet + game.min_bet) {
-        abort EInvalidBet
-      };
-    };
+  player_index
+}
 
-    // Check if player has enough balance for bet/raise
-    if (amount > player.balance + player.current_bet) {
-      abort EInvalidBet
-    };
-
-    let additional_amount = amount - player.current_bet;
-    player.balance = player.balance - additional_amount;
-    player.current_bet = amount;
-    game.current_bet = amount;
-    game.last_raise_position = player_index;
-
-    if (player.balance == 0) {
-      player.is_all_in = true;
-    }
-  } else {
-    abort EInvalidAction
-  };
-
+// Helper function to complete player action (emit event and advance game)
+fun complete_player_action(
+  game: &mut PokerGame,
+  player_addr: address,
+  action: u8,
+  amount: u64,
+) {
   // Emit action event
   let game_id = sui::object::uid_to_inner(&game.id);
   sui::event::emit(PlayerMoved {
@@ -361,6 +312,131 @@ public entry fun player_action(
   if (is_round_complete(game)) {
     advance_game_state(game);
   }
+}
+
+// Player action: fold
+public entry fun fold(
+  game: &mut PokerGame,
+  ctx: &mut TxContext,
+) {
+  let player_index = validate_player_action(game, ctx);
+  let player_addr = ctx.sender();
+
+  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  player.is_folded = true;
+
+  complete_player_action(game, player_addr, ACTION_FOLD, 0);
+}
+
+// Player action: check
+public entry fun check(
+  game: &mut PokerGame,
+  ctx: &mut TxContext,
+) {
+  let player_index = validate_player_action(game, ctx);
+  let player_addr = ctx.sender();
+
+  let player = std::vector::borrow(&game.players, player_index);
+  if (game.current_bet != player.current_bet) {
+    abort EInvalidAction
+  };
+
+  complete_player_action(game, player_addr, ACTION_CHECK, 0);
+}
+
+// Player action: call
+public entry fun call(
+  game: &mut PokerGame,
+  ctx: &mut TxContext,
+) {
+  let player_index = validate_player_action(game, ctx);
+  let player_addr = ctx.sender();
+
+  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  let call_amount = game.current_bet - player.current_bet;
+  
+  if (call_amount > player.balance) {
+    abort EInvalidBet
+  };
+
+  player.balance = player.balance - call_amount;
+  player.current_bet = game.current_bet;
+  if (player.balance == 0) {
+    player.is_all_in = true;
+  };
+
+  complete_player_action(game, player_addr, ACTION_CALL, call_amount);
+}
+
+// Player action: bet
+public entry fun bet(
+  game: &mut PokerGame,
+  amount: u64,
+  ctx: &mut TxContext,
+) {
+  let player_index = validate_player_action(game, ctx);
+  let player_addr = ctx.sender();
+
+  // For a bet, there should be no current bet
+  if (game.current_bet != 0) {
+    abort EInvalidAction
+  };
+
+  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  
+  // Check if player has enough balance for bet
+  if (amount > player.balance + player.current_bet) {
+    abort EInvalidBet
+  };
+
+  let additional_amount = amount - player.current_bet;
+  player.balance = player.balance - additional_amount;
+  player.current_bet = amount;
+  game.current_bet = amount;
+  game.last_raise_position = player_index;
+
+  if (player.balance == 0) {
+    player.is_all_in = true;
+  };
+
+  complete_player_action(game, player_addr, ACTION_BET, amount);
+}
+
+// Player action: raise
+public entry fun raise(
+  game: &mut PokerGame,
+  amount: u64,
+  ctx: &mut TxContext,
+) {
+  let player_index = validate_player_action(game, ctx);
+  let player_addr = ctx.sender();
+
+  // For a raise, there should be a current bet and the raise should be at least min_bet
+  if (game.current_bet == 0) {
+    abort EInvalidAction
+  };
+  if (amount < game.current_bet + game.min_bet) {
+    abort EInvalidBet
+  };
+
+  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  
+  // Check if player has enough balance for raise
+  if (amount > player.balance + player.current_bet) {
+    abort EInvalidBet
+  };
+
+  let additional_amount = amount - player.current_bet;
+  player.balance = player.balance - additional_amount;
+  player.current_bet = amount;
+  game.current_bet = amount;
+  game.last_raise_position = player_index;
+
+  if (player.balance == 0) {
+    player.is_all_in = true;
+  };
+
+  complete_player_action(game, player_addr, ACTION_RAISE, amount);
 }
 
 // ===== Helper Functions =====
@@ -559,8 +635,7 @@ fun is_round_complete(game: &PokerGame): bool {
 fun advance_game_state(game: &mut PokerGame) {
   let game_id = game.id.to_inner();
 
-  // Collect bets into pot
-  collect_bets(game);
+  reset_player_bets(game);
 
   // Check if only one player remains
   if (count_active_players(game) == 1) {
@@ -613,7 +688,17 @@ fun advance_game_state(game: &mut PokerGame) {
   sui::event::emit(RoundChanged { game_id, new_state: game.state });
 }
 
-fun collect_bets(_game: &mut PokerGame) {}
+fun reset_player_bets(game: &mut PokerGame) {
+  let player_count = game.players.length();
+
+  // Reset all players' current_bet to 0 for the next betting round
+  let mut j = 0;
+  while (j < player_count) {
+    let player = game.players.borrow_mut(j);
+    player.current_bet = 0;
+    j = j + 1;
+  };
+}
 
 fun count_active_players(game: &PokerGame): u64 {
   let player_count = game.players.length();
@@ -715,6 +800,19 @@ fun distribute_pot(game: &mut PokerGame) {
 
   // Set game state to game over
   game.state = STATE_GAME_OVER;
+}
+
+// Debug function to check current player
+public fun get_current_player(game: &PokerGame): u64 {
+  game.current_player
+}
+
+public fun get_player_count(game: &PokerGame): u64 {
+  game.players.length()
+}
+
+public fun get_dealer_position(game: &PokerGame): u64 {
+  game.dealer_position
 }
 
 // Hand evaluation would be implemented here in a full version of the contract

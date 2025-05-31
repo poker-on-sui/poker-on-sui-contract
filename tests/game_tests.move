@@ -8,7 +8,7 @@ use sui::sui::SUI;
 use sui::test_scenario::{Self as ts, Scenario};
 
 // Test addresses
-const ADMIN: address = @0xABCD;
+const PLAYER0: address = @0xABCD;
 const PLAYER1: address = @0x1111;
 const PLAYER2: address = @0x2222;
 const PLAYER3: address = @0x3333;
@@ -27,14 +27,11 @@ const EInvalidSeed: u64 = 10;
 
 // Helper function to set up a test scenario with a created game
 fun setup_game(): Scenario {
-  let mut scenario = ts::begin(ADMIN);
-  {
-    // Create the poker game
-    game::create_game(
-      BUY_IN,
-      ts::ctx(&mut scenario),
-    );
-  };
+  let mut scenario = ts::begin(PLAYER0);
+
+  // Create the poker game
+  game::create_game(BUY_IN, scenario.ctx());
+
   scenario
 }
 
@@ -58,19 +55,19 @@ fun mint_sui(amount: u64, ctx: &mut TxContext): Coin<SUI> {
 
 #[test]
 fun test_create_game() {
-  let mut scenario = ts::begin(ADMIN);
+  let mut scenario = ts::begin(PLAYER0);
   {
     // Create a game
     game::create_game(
       BUY_IN,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     );
   };
   // Check that the game was created
-  ts::next_tx(&mut scenario, ADMIN);
+  ts::next_tx(&mut scenario, PLAYER0);
   {
     assert!(ts::has_most_recent_shared<PokerGame>(), 0);
-    let game = ts::take_shared<PokerGame>(&scenario);
+    let game = scenario.take_shared<PokerGame>();
     ts::return_shared(game);
   };
   ts::end(scenario);
@@ -81,20 +78,20 @@ fun test_join_game() {
   let mut scenario = setup_game();
 
   // Player 1 joins
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Player 2 joins
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
     ts::return_shared(game);
   };
 
@@ -108,11 +105,11 @@ fun test_join_game_insufficient_buy_in() {
   let mut scenario = setup_game();
 
   // Player tries to join with insufficient funds
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN - 1, ts::ctx(&mut scenario)); // Less than required
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN - 1, scenario.ctx()); // Less than required
+    game.join_game(coin, scenario.ctx());
     ts::return_shared(game);
   };
 
@@ -121,25 +118,24 @@ fun test_join_game_insufficient_buy_in() {
 
 #[test]
 #[expected_failure(abort_code = EAlreadyJoined, location = game)]
-// EAlreadyJoined from poker module
 fun test_join_game_already_joined() {
   let mut scenario = setup_game();
 
   // Player 1 joins
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Player 1 tries to join again
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario)); // Should fail
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx()); // Should fail
     ts::return_shared(game);
   };
 
@@ -151,31 +147,31 @@ fun test_start_game() {
   let mut scenario = setup_game();
 
   // Add 2 players
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  // Admin starts the game
-  ts::next_tx(&mut scenario, ADMIN);
+  // PLAYER0 starts the game
+  scenario.next_tx(PLAYER0);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     let seed = generate_seed_for_test();
     game::start_game_with_seed_for_testing(
       &mut game,
       seed,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     );
     ts::return_shared(game);
   };
@@ -190,31 +186,31 @@ fun test_start_game_not_owner() {
   let mut scenario = setup_game();
 
   // Add 2 players
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Player1 tries to start the game (not the owner)
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     let seed = generate_seed_for_test();
     game::start_game_with_seed_for_testing(
       &mut game,
       seed,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     ); // Should fail
     ts::return_shared(game);
   };
@@ -228,31 +224,31 @@ fun test_start_game_invalid_seed() {
   let mut scenario = setup_game();
 
   // Add 2 players
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  // Admin tries to start game with empty seed
-  ts::next_tx(&mut scenario, ADMIN);
+  // PLAYER0 tries to start game with empty seed
+  scenario.next_tx(PLAYER0);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     let empty_seed = std::vector::empty<u8>(); // Empty seed
     game::start_game_with_seed_for_testing(
       &mut game,
       empty_seed,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     ); // Should fail
     ts::return_shared(game);
   };
@@ -265,84 +261,93 @@ fun test_player_actions() {
   let mut scenario = setup_game();
 
   // Add 4 players
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER3);
+  scenario.next_tx(PLAYER3);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER4);
+  scenario.next_tx(PLAYER4);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Start the game
-  ts::next_tx(&mut scenario, ADMIN);
+  scenario.next_tx(PLAYER0);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     let seed = generate_seed_for_test();
     game::start_game_with_seed_for_testing(
       &mut game,
       seed,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     );
     ts::return_shared(game);
   };
 
   // Test player actions - first player after big blind calls
-  ts::next_tx(&mut scenario, PLAYER4); // Player after big blind
+  scenario.next_tx(PLAYER3); // Player after big blind (position 3)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call the big blind
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario)); // ACTION_CALL = 2
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Next player raises
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER4);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Raise to 3x big blind
-    game::player_action(&mut game, 4, MIN_BET * 3, ts::ctx(&mut scenario)); // ACTION_RAISE = 4
+    game::raise(&mut game, MIN_BET * 3, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Dealer folds
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Fold
+    game::fold(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Small blind player folds
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Fold
-    game::player_action(&mut game, 0, 0, ts::ctx(&mut scenario)); // ACTION_FOLD = 0
+    game::fold(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Big blind player calls
-  ts::next_tx(&mut scenario, PLAYER3);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call the raise
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario)); // ACTION_CALL = 2
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
@@ -354,100 +359,133 @@ fun test_full_game_flow() {
   let mut scenario = setup_game();
 
   // Add 2 players
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Start the game
-  ts::next_tx(&mut scenario, ADMIN);
+  scenario.next_tx(PLAYER0);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     let seed = generate_seed_for_test();
     game::start_game_with_seed_for_testing(
       &mut game,
       seed,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     );
     ts::return_shared(game);
   };
 
   // Pre-flop actions
-  ts::next_tx(&mut scenario, PLAYER2); // Big blind acts first in 2-player
+  scenario.next_tx(PLAYER0); // First to act in 3-player (dealer after big blind)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER1); // Dealer/small blind acts second
+  scenario.next_tx(PLAYER1); // Small blind
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Big blind gets option to check since everyone called
+  scenario.next_tx(PLAYER2); // Big blind
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Check
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Flop actions
-  ts::next_tx(&mut scenario, PLAYER2); // First player after flop
+  scenario.next_tx(PLAYER1); // First player after flop (small blind)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER2); // Big blind
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER0); // Dealer
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Check
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Turn actions
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER1); // First to act (small blind)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Bet
-    game::player_action(&mut game, 3, MIN_BET, ts::ctx(&mut scenario));
+    game::bet(&mut game, MIN_BET, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER2); // Big blind
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER0); // Dealer
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Call
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
   // River actions
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER1); // First to act (small blind)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER2); // Big blind
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
+    // Check
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER0); // Dealer
+  {
+    let mut game = scenario.take_shared<PokerGame>();
     // Check - this should trigger showdown
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
@@ -461,50 +499,59 @@ fun test_all_in_scenario() {
   let mut scenario = setup_game();
 
   // Add 2 players
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Start the game
-  ts::next_tx(&mut scenario, ADMIN);
+  scenario.next_tx(PLAYER0);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     let seed = generate_seed_for_test();
     game::start_game_with_seed_for_testing(
       &mut game,
       seed,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     );
     ts::return_shared(game);
   };
 
-  // Player2 goes all-in pre-flop (big blind acts first in 2-player)
-  ts::next_tx(&mut scenario, PLAYER2);
+  // PLAYER0 goes all-in pre-flop (first to act in 3-player)
+  scenario.next_tx(PLAYER0);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Raise to all-in
-    game::player_action(&mut game, 4, BUY_IN, ts::ctx(&mut scenario));
+    game::raise(&mut game, BUY_IN, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Player1 calls
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call the all-in
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Player2 calls
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Call the all-in
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
@@ -518,184 +565,216 @@ fun test_four_player_game_flow() {
   let mut scenario = setup_game();
 
   // Add 4 players
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER3);
+  scenario.next_tx(PLAYER3);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER4);
+  scenario.next_tx(PLAYER4);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Start the game
-  ts::next_tx(&mut scenario, ADMIN);
+  scenario.next_tx(PLAYER0);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     let seed = generate_seed_for_test();
     game::start_game_with_seed_for_testing(
       &mut game,
       seed,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     );
     ts::return_shared(game);
   };
 
-  // Pre-flop actions (4 players: P1=dealer, P2=small blind, P3=big blind, P4=first to act)
-  ts::next_tx(&mut scenario, PLAYER4); // First player after big blind
+  // Pre-flop actions (5 players: PLAYER0=dealer, PLAYER1=small blind, PLAYER2=big blind, PLAYER3=first to act)
+  scenario.next_tx(PLAYER3); // First player after big blind (position 3)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER1); // Dealer
+  scenario.next_tx(PLAYER4); // Second to act (position 4)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2); // Small blind
+  scenario.next_tx(PLAYER0); // Dealer (position 0)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
+    // Call
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER1); // Small blind (position 1)
+  {
+    let mut game = scenario.take_shared<PokerGame>();
     // Call (complete the small blind)
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER3); // Big blind
+  scenario.next_tx(PLAYER2); // Big blind (position 2)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Flop actions (all players check)
-  ts::next_tx(&mut scenario, PLAYER2); // First to act after flop
+  scenario.next_tx(PLAYER1); // First to act after flop (position 1)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER3);
+  scenario.next_tx(PLAYER2); // Position 2
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER4);
+  scenario.next_tx(PLAYER3); // Position 3
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER4); // Position 4
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER0); // Dealer (position 0)
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Check
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Turn actions
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER1); // First to act on turn (position 1)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Bet
-    game::player_action(&mut game, 3, MIN_BET, ts::ctx(&mut scenario));
+    game::bet(&mut game, MIN_BET, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER3);
+  scenario.next_tx(PLAYER2); // Position 2
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Fold
-    game::player_action(&mut game, 0, 0, ts::ctx(&mut scenario));
+    game::fold(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER4);
+  scenario.next_tx(PLAYER3); // Position 3
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER4); // Position 4
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Raise
-    game::player_action(&mut game, 4, MIN_BET * 2, ts::ctx(&mut scenario));
+    game::raise(&mut game, MIN_BET * 2, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER0); // Dealer (position 0)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Fold
-    game::player_action(&mut game, 0, 0, ts::ctx(&mut scenario));
+    game::fold(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER4);
+  scenario.next_tx(PLAYER1); // Back to player 1 for raise response
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  // River actions
-  ts::next_tx(&mut scenario, PLAYER4);
+  scenario.next_tx(PLAYER3); // Player 3 needs to respond to raise
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
+    // Call
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // River actions - remaining players: PLAYER1, PLAYER3, PLAYER4
+  scenario.next_tx(PLAYER1); // First to act on river
+  {
+    let mut game = scenario.take_shared<PokerGame>();
     // Check
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER3);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    // Check - this should trigger showdown
-    game::player_action(&mut game, 1, 0, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    // Check
+    game::check(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  // Game should be over now with PLAYER1 and PLAYER4 remaining
+  scenario.next_tx(PLAYER4);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Check - this should trigger showdown
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Game should be over now with PLAYER1, PLAYER3, and PLAYER4 remaining
 
   ts::end(scenario);
 }
@@ -705,38 +784,38 @@ fun test_four_player_join_game() {
   let mut scenario = setup_game();
 
   // Player 1 joins
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Player 2 joins
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Player 3 joins
-  ts::next_tx(&mut scenario, PLAYER3);
+  scenario.next_tx(PLAYER3);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Player 4 joins
-  ts::next_tx(&mut scenario, PLAYER4);
+  scenario.next_tx(PLAYER4);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
@@ -748,88 +827,101 @@ fun test_four_player_all_in_scenario() {
   let mut scenario = setup_game();
 
   // Add 4 players
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER1);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER2);
+  scenario.next_tx(PLAYER2);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER3);
+  scenario.next_tx(PLAYER3);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
-  ts::next_tx(&mut scenario, PLAYER4);
+  scenario.next_tx(PLAYER4);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    let coin = mint_sui(BUY_IN, ts::ctx(&mut scenario));
-    game::join_game(&mut game, coin, ts::ctx(&mut scenario));
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, coin, scenario.ctx());
     ts::return_shared(game);
   };
 
   // Start the game
-  ts::next_tx(&mut scenario, ADMIN);
+  scenario.next_tx(PLAYER0);
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     let seed = generate_seed_for_test();
     game::start_game_with_seed_for_testing(
       &mut game,
       seed,
-      ts::ctx(&mut scenario),
+      scenario.ctx(),
     );
     ts::return_shared(game);
   };
 
-  // Player4 goes all-in pre-flop
-  ts::next_tx(&mut scenario, PLAYER4);
+  // Pre-flop actions (5 players: PLAYER0=dealer, PLAYER1=small blind, PLAYER2=big blind, PLAYER3=first to act)
+  scenario.next_tx(PLAYER3); // First to act (position 3)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
+    // Call
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER4); // Second to act (position 4) - goes all-in
+  {
+    let mut game = scenario.take_shared<PokerGame>();
     // Raise to all-in
-    game::player_action(&mut game, 4, BUY_IN, ts::ctx(&mut scenario));
+    game::raise(&mut game, BUY_IN, scenario.ctx());
     ts::return_shared(game);
   };
 
-  // Player1 calls
-  ts::next_tx(&mut scenario, PLAYER1);
+  scenario.next_tx(PLAYER0); // Dealer (position 0)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
-    // Call the all-in
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
-    ts::return_shared(game);
-  };
-
-  // Player2 folds
-  ts::next_tx(&mut scenario, PLAYER2);
-  {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Fold
-    game::player_action(&mut game, 0, 0, ts::ctx(&mut scenario));
+    game::fold(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  // Player3 calls
-  ts::next_tx(&mut scenario, PLAYER3);
+  scenario.next_tx(PLAYER1); // Small blind (position 1)
   {
-    let mut game = ts::take_shared<PokerGame>(&scenario);
+    let mut game = scenario.take_shared<PokerGame>();
     // Call the all-in
-    game::player_action(&mut game, 2, 0, ts::ctx(&mut scenario));
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  // This should automatically advance to showdown with 3 players all-in
+  scenario.next_tx(PLAYER2); // Big blind (position 2)
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Fold
+    game::fold(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER3); // Back to PLAYER3 to respond to raise
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Call the all-in
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // This should automatically advance to showdown with PLAYER1, PLAYER3, and PLAYER4 all-in
 
   ts::end(scenario);
 }
