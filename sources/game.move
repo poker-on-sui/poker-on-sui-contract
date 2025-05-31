@@ -12,16 +12,16 @@ const CARDS_PER_PLAYER: u64 = 2;
 const SEED_LENGTH: u64 = 32;
 
 // Error codes
-const EGameInProgress: u64 = 0;
-const EInvalidPlayerCount: u64 = 1;
-const EInsufficientBuyIn: u64 = 2;
-const EInvalidPlayer: u64 = 4;
-const EInvalidAction: u64 = 5;
-const EInvalidBet: u64 = 6;
-const ENotYourTurn: u64 = 7;
-const EAlreadyJoined: u64 = 9;
-const EInvalidSeed: u64 = 10;
-const EInvalidGameState: u64 = 11;
+const EGameInProgress: u64 = 0x0000;
+const EInvalidPlayerCount: u64 = 0x0001;
+const EInsufficientBuyIn: u64 = 0x0002;
+const EInvalidPlayer: u64 = 0x0004;
+const EInvalidAction: u64 = 0x0005;
+const EInvalidBet: u64 = 0x0006;
+const ENotYourTurn: u64 = 0x0007;
+const EAlreadyJoined: u64 = 0x0009;
+const EInvalidSeed: u64 = 0x000A;
+const EInvalidGameState: u64 = 0x000B;
 
 // Card representation
 // Suit: 0 = Hearts, 1 = Diamonds, 2 = Clubs, 3 = Spades
@@ -115,10 +115,7 @@ public struct GameEnded has copy, drop {
 }
 
 // Create a new poker game
-public entry fun create_game(
-  buy_in: u64,
-  ctx: &mut TxContext,
-) {
+public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
   let id = sui::object::new(ctx);
   let game_id = sui::object::uid_to_inner(&id);
 
