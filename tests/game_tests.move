@@ -1,7 +1,7 @@
 #[test_only]
-module droplet_poker::game_tests;
+module poker::game_tests;
 
-use droplet_poker::game::{Self, PokerGame};
+use poker::game::{Self, PokerGame};
 use sui::coin::{Self, Coin};
 use sui::random::new_generator_for_testing;
 use sui::sui::SUI;

@@ -1,4 +1,4 @@
-module droplet_poker::game;
+module poker::game;
 
 use sui::balance::{Self, Balance};
 use sui::coin::{Self, Coin};
