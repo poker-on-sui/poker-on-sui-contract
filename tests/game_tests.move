@@ -925,3 +925,129 @@ fun test_four_player_all_in_scenario() {
 
   ts::end(scenario);
 }
+
+// ===== Hand Evaluation Tests =====
+
+#[test]
+fun test_hand_evaluation_integration() {
+  let mut scenario = setup_game();
+
+  // Join 2 players to create a simple 3-player game
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let sui_coin = coin::mint_for_testing<SUI>(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, sui_coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let sui_coin = coin::mint_for_testing<SUI>(BUY_IN, scenario.ctx());
+    game::join_game(&mut game, sui_coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Start the game to trigger hand evaluation logic
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let seed = generate_seed_for_test();
+    game::start_game_with_seed_for_testing(&mut game, seed, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Have players take actions to reach showdown where hand evaluation occurs
+  scenario.next_tx(PLAYER0); // Dealer (first to act in 3-player)
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER1); // Small blind
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER2); // Big blind
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx()); // Check to proceed to flop
+    ts::return_shared(game);
+  };
+
+  // Flop round - have all players check to advance
+  scenario.next_tx(PLAYER1); // First to act post-flop
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Turn round - have all players check to advance
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // River round - have all players check to trigger showdown and hand evaluation
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game::check(&mut game, scenario.ctx()); // This should trigger showdown and hand evaluation
+    ts::return_shared(game);
+  };
+
+  // The game should now be completed with hand evaluation having determined the winner
+  // This test ensures the hand evaluation system integrates properly without errors
+  
+  ts::end(scenario);
+}
