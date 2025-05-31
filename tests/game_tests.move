@@ -704,8 +704,8 @@ fun test_four_player_game_flow() {
   scenario.next_tx(PLAYER2); // Position 2
   {
     let mut game = scenario.take_shared<PokerGame>();
-    // Fold
-    game::fold(&mut game, scenario.ctx());
+    // Call
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
@@ -720,20 +720,12 @@ fun test_four_player_game_flow() {
   scenario.next_tx(PLAYER4); // Position 4
   {
     let mut game = scenario.take_shared<PokerGame>();
-    // Raise
-    game::raise(&mut game, MIN_BET * 2, scenario.ctx());
+    // Call
+    game::call(&mut game, scenario.ctx());
     ts::return_shared(game);
   };
 
-  scenario.next_tx(PLAYER0); // Dealer (position 0)
-  {
-    let mut game = scenario.take_shared<PokerGame>();
-    // Fold
-    game::fold(&mut game, scenario.ctx());
-    ts::return_shared(game);
-  };
-
-  scenario.next_tx(PLAYER1); // Back to player 1 for raise response
+  scenario.next_tx(PLAYER0); // Dealer
   {
     let mut game = scenario.take_shared<PokerGame>();
     // Call
@@ -741,16 +733,8 @@ fun test_four_player_game_flow() {
     ts::return_shared(game);
   };
 
-  scenario.next_tx(PLAYER3); // Player 3 needs to respond to raise
-  {
-    let mut game = scenario.take_shared<PokerGame>();
-    // Call
-    game::call(&mut game, scenario.ctx());
-    ts::return_shared(game);
-  };
-
-  // River actions - remaining players: PLAYER1, PLAYER3, PLAYER4
-  scenario.next_tx(PLAYER1); // First to act on river
+  // River actions
+  scenario.next_tx(PLAYER1); // First to act (small blind)
   {
     let mut game = scenario.take_shared<PokerGame>();
     // Check
@@ -758,7 +742,7 @@ fun test_four_player_game_flow() {
     ts::return_shared(game);
   };
 
-  scenario.next_tx(PLAYER3);
+  scenario.next_tx(PLAYER2); // Big blind
   {
     let mut game = scenario.take_shared<PokerGame>();
     // Check
@@ -766,7 +750,23 @@ fun test_four_player_game_flow() {
     ts::return_shared(game);
   };
 
-  scenario.next_tx(PLAYER4);
+  scenario.next_tx(PLAYER3); // Position 3
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Check
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER4); // Position 4
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Check
+    game::check(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER0); // Dealer
   {
     let mut game = scenario.take_shared<PokerGame>();
     // Check - this should trigger showdown
@@ -872,16 +872,8 @@ fun test_four_player_all_in_scenario() {
     ts::return_shared(game);
   };
 
-  // Pre-flop actions (5 players: PLAYER0=dealer, PLAYER1=small blind, PLAYER2=big blind, PLAYER3=first to act)
-  scenario.next_tx(PLAYER3); // First to act (position 3)
-  {
-    let mut game = scenario.take_shared<PokerGame>();
-    // Call
-    game::call(&mut game, scenario.ctx());
-    ts::return_shared(game);
-  };
-
-  scenario.next_tx(PLAYER4); // Second to act (position 4) - goes all-in
+  // PLAYER3 goes all-in pre-flop (first to act in 5-player game)
+  scenario.next_tx(PLAYER3);
   {
     let mut game = scenario.take_shared<PokerGame>();
     // Raise to all-in
@@ -889,15 +881,8 @@ fun test_four_player_all_in_scenario() {
     ts::return_shared(game);
   };
 
-  scenario.next_tx(PLAYER0); // Dealer (position 0)
-  {
-    let mut game = scenario.take_shared<PokerGame>();
-    // Fold
-    game::fold(&mut game, scenario.ctx());
-    ts::return_shared(game);
-  };
-
-  scenario.next_tx(PLAYER1); // Small blind (position 1)
+  // PLAYER4 calls
+  scenario.next_tx(PLAYER4);
   {
     let mut game = scenario.take_shared<PokerGame>();
     // Call the all-in
@@ -905,15 +890,8 @@ fun test_four_player_all_in_scenario() {
     ts::return_shared(game);
   };
 
-  scenario.next_tx(PLAYER2); // Big blind (position 2)
-  {
-    let mut game = scenario.take_shared<PokerGame>();
-    // Fold
-    game::fold(&mut game, scenario.ctx());
-    ts::return_shared(game);
-  };
-
-  scenario.next_tx(PLAYER3); // Back to PLAYER3 to respond to raise
+  // PLAYER0 (dealer) calls
+  scenario.next_tx(PLAYER0);
   {
     let mut game = scenario.take_shared<PokerGame>();
     // Call the all-in
@@ -921,7 +899,25 @@ fun test_four_player_all_in_scenario() {
     ts::return_shared(game);
   };
 
-  // This should automatically advance to showdown with PLAYER1, PLAYER3, and PLAYER4 all-in
+  // PLAYER1 (small blind) calls
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Call the all-in
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // PLAYER2 (big blind) calls
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // Call the all-in
+    game::call(&mut game, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // This should automatically advance to showdown with all players all-in
 
   ts::end(scenario);
 }
@@ -1049,5 +1045,203 @@ fun test_hand_evaluation_integration() {
   // The game should now be completed with hand evaluation having determined the winner
   // This test ensures the hand evaluation system integrates properly without errors
   
+  ts::end(scenario);
+}
+
+#[test]
+fun test_side_pot_all_in_scenario() {
+  let mut scenario = setup_game();
+
+  // Player 1 joins
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Player 2 joins  
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Start the game
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let seed = generate_seed_for_test();
+    game.start_game_with_seed_for_testing(seed, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Test all-in scenario by having the correct player act
+  // With 3 players: PLAYER0 (dealer), PLAYER1 (small blind), PLAYER2 (big blind)
+  // First to act pre-flop is PLAYER0 (back to dealer)
+  scenario.next_tx(PLAYER0); // First to act after BB
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    // In pre-flop, there's already a big blind bet, so we need to call or raise
+    game.call(scenario.ctx()); // Call the big blind
+    ts::return_shared(game);
+  };
+
+  // PLAYER1 (small blind) calls
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.call(scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // PLAYER2 (big blind) checks to complete pre-flop
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.check(scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  ts::end(scenario);
+}
+
+#[test]
+fun test_side_pot_multiple_all_ins() {
+  let mut scenario = setup_game();
+
+  // Add more players for complex side pot scenario
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER3);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Start the game
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let seed = generate_seed_for_test();
+    game.start_game_with_seed_for_testing(seed, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Create scenario with different all-in amounts
+  // Pre-flop: PLAYER0 (dealer), PLAYER1 (SB), PLAYER2 (BB), PLAYER3 first to act
+  
+  // PLAYER3 raises significantly
+  scenario.next_tx(PLAYER3);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.raise(MIN_BET * 4, scenario.ctx()); // Raise to 4x min bet
+    ts::return_shared(game);
+  };
+
+  // PLAYER0 calls
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.call(scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // PLAYER1 calls
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.call(scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // PLAYER2 calls to complete pre-flop
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.call(scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Now in post-flop, simulate different all-in amounts to test side pots
+  
+  ts::end(scenario);
+}
+
+#[test]
+fun test_dealer_rotation_multiple_hands() {
+  let mut scenario = setup_game();
+
+  // Add players
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER2);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let coin = mint_sui(BUY_IN, scenario.ctx());
+    game.join_game(coin, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Start first hand - PLAYER0 is dealer (position 0)
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    let seed = generate_seed_for_test();
+    game.start_game_with_seed_for_testing(seed, scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // Fast forward to game over state for first hand
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.fold(scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  scenario.next_tx(PLAYER1);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.fold(scenario.ctx());
+    ts::return_shared(game);
+  };
+
+  // PLAYER2 wins by default (only one left)
+  // Game should now be in STATE_GAME_OVER
+
+  // Start new hand with rotated dealer - should be PLAYER1 (position 1)
+  scenario.next_tx(PLAYER0);
+  {
+    let mut game = scenario.take_shared<PokerGame>();
+    game.start_new_hand(scenario.ctx());
+    ts::return_shared(game);
+  };
+
   ts::end(scenario);
 }

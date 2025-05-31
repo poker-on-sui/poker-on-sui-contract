@@ -22,6 +22,7 @@ public struct HandRank has copy, drop, store {
 ### 2. Hand Types Supported
 
 The system supports all standard poker hand rankings:
+
 - **High Card** (0): Highest card value
 - **One Pair** (1): Two cards of same rank
 - **Two Pair** (2): Two pairs of different ranks
@@ -36,10 +37,12 @@ The system supports all standard poker hand rankings:
 ### 3. Core Functions Implemented
 
 #### Main Evaluation Functions
+
 - `evaluate_hand(cards: &vector<Card>): HandRank` - Evaluates 7-card hand and returns best 5-card HandRank
 - `compare_hands(hand1: &HandRank, hand2: &HandRank): bool` - Compares two hands to determine winner
 
 #### Helper Functions
+
 - `sort_ranks()` - Sorts card ranks in descending order
 - `check_flush()` - Detects flush hands and returns suit
 - `check_straight()` - Detects straight hands including wheel (A-2-3-4-5)
@@ -55,9 +58,11 @@ The system supports all standard poker hand rankings:
 ### 4. Integration with Game Logic
 
 #### Updated `distribute_pot()` Function
+
 The pot distribution function now:
+
 1. **Single Active Player**: Awards entire pot to last remaining player
-2. **Multiple Active Players**: 
+2. **Multiple Active Players**:
    - Evaluates each player's 7-card hand (2 hole cards + 5 community cards)
    - Compares all hands using the hand evaluation system
    - Identifies winner(s) (handles ties properly)
@@ -65,6 +70,7 @@ The pot distribution function now:
    - Handles remainder from integer division
 
 #### Hand Evaluation Process
+
 1. Combines each player's hole cards with community cards
 2. Evaluates best 5-card hand from 7 available cards
 3. Ranks hands according to poker rules
@@ -74,6 +80,7 @@ The pot distribution function now:
 ### 5. Error Handling
 
 Added comprehensive error handling:
+
 - `EInvalidHandSize` - Validates 7-card hands for evaluation
 - Arithmetic overflow protection in straight detection
 - Proper boundary checking for vector operations
@@ -81,12 +88,14 @@ Added comprehensive error handling:
 ### 6. Testing
 
 #### Comprehensive Test Coverage
+
 - All existing tests continue to pass (15/15 tests passing)
 - Added `test_hand_evaluation_integration` to verify end-to-end functionality
 - Tests cover multi-player scenarios with hand evaluation
 - Validates proper game state transitions through showdown
 
 #### Edge Cases Handled
+
 - Insufficient cards for straight detection
 - Wheel straight (A-2-3-4-5) recognition
 - Tie-breaking with kickers
@@ -96,6 +105,7 @@ Added comprehensive error handling:
 ### 7. Code Quality
 
 #### Move Language Best Practices
+
 - Follows `snake_case` naming convention
 - Uses proper error constants with hex codes
 - Implements efficient vector operations
@@ -103,6 +113,7 @@ Added comprehensive error handling:
 - Comprehensive documentation for public functions
 
 #### Performance Optimizations
+
 - Efficient sorting algorithms
 - Minimal vector allocations
 - Single-pass hand evaluation
@@ -111,24 +122,28 @@ Added comprehensive error handling:
 ## Technical Achievements
 
 ### 1. Complete Poker Hand Evaluation
+
 - ✅ Implemented all 10 poker hand types
 - ✅ Proper tie-breaking with kickers
 - ✅ Handles edge cases like wheel straights
 - ✅ Efficient 7-card to 5-card hand evaluation
 
 ### 2. Integration with Game Flow
+
 - ✅ Seamless integration with existing game logic
 - ✅ Maintains all existing functionality
 - ✅ Proper event emission for winners
 - ✅ Accurate pot distribution
 
 ### 3. Testing and Validation
+
 - ✅ All tests passing (100% success rate)
 - ✅ Integration test for hand evaluation
 - ✅ Edge case coverage
 - ✅ Multi-player scenario validation
 
 ### 4. Move Language Compliance
+
 - ✅ Proper struct definitions
 - ✅ Efficient vector operations
 - ✅ Error handling with abort codes
@@ -148,13 +163,16 @@ When a poker game reaches showdown, the system:
 ## Files Modified
 
 ### Primary Implementation
+
 - `sources/game.move` - Added 300+ lines of hand evaluation logic
 
 ### Testing
+
 - `tests/game_tests.move` - Added integration test
 - All existing tests maintained compatibility
 
 ### Documentation
+
 - `HAND_EVALUATION_IMPLEMENTATION.md` - This implementation summary
 
 ## Conclusion

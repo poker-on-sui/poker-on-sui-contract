@@ -68,12 +68,19 @@ public struct HandRank has copy, drop, store {
   kickers: vector<u8>, // Additional kickers for tie-breaking
 }
 
+// Side pot information for all-in scenarios
+public struct SidePot has drop, store {
+  amount: u64,
+  eligible_players: vector<u64>, // Player indices eligible for this pot
+}
+
 // Player information
 public struct Player has drop, store {
   addr: address,
   cards: vector<Card>,
   balance: u64,
   current_bet: u64,
+  total_contributed: u64, // Total amount contributed to all pots this hand
   is_folded: bool,
   is_all_in: bool,
 }
@@ -85,6 +92,7 @@ public struct PokerGame has key {
   deck: vector<Card>,
   community_cards: vector<Card>,
   pot: Balance<SUI>,
+  side_pots: vector<SidePot>,
   buy_in: u64,
   min_bet: u64,
   current_bet: u64,
@@ -149,6 +157,7 @@ public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
         cards: vector[],
         balance: buy_in,
         current_bet: 0,
+        total_contributed: 0,
         is_folded: false,
         is_all_in: false,
       },
@@ -156,6 +165,7 @@ public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
     deck: vector[],
     community_cards: vector[],
     pot: balance::zero(),
+    side_pots: vector[],
     buy_in,
     min_bet,
     current_bet: 0,
@@ -213,6 +223,7 @@ public entry fun join_game(
     cards: vector[],
     balance: game.buy_in,
     current_bet: 0,
+    total_contributed: 0,
     is_folded: false,
     is_all_in: false,
   };
@@ -382,6 +393,7 @@ public entry fun call(
 
   player.balance = player.balance - call_amount;
   player.current_bet = game.current_bet;
+  player.total_contributed = player.total_contributed + call_amount;
   if (player.balance == 0) {
     player.is_all_in = true;
   };
@@ -418,6 +430,7 @@ public entry fun bet(
   let additional_amount = amount - player.current_bet;
   player.balance = player.balance - additional_amount;
   player.current_bet = amount;
+  player.total_contributed = player.total_contributed + additional_amount;
   game.current_bet = amount;
   game.last_raise_position = player_index;
 
@@ -455,6 +468,7 @@ public entry fun raise(
   let additional_amount = amount - player.current_bet;
   player.balance = player.balance - additional_amount;
   player.current_bet = amount;
+  player.total_contributed = player.total_contributed + additional_amount;
   game.current_bet = amount;
   game.last_raise_position = player_index;
 
@@ -541,6 +555,7 @@ fun collect_blinds(game: &mut PokerGame) {
   };
   player.balance = player.balance - sb_amount;
   player.current_bet = sb_amount;
+  player.total_contributed = player.total_contributed + sb_amount;
   if (player.balance == 0) {
     player.is_all_in = true;
   };
@@ -553,6 +568,7 @@ fun collect_blinds(game: &mut PokerGame) {
   };
   player.balance = player.balance - bb_amount;
   player.current_bet = bb_amount;
+  player.total_contributed = player.total_contributed + bb_amount;
   if (player.balance == 0) {
     player.is_all_in = true;
   };
@@ -726,6 +742,161 @@ fun reset_player_bets(game: &mut PokerGame) {
   };
 }
 
+// Create side pots for all-in scenarios
+fun create_side_pots(game: &mut PokerGame) {
+  let player_count = game.players.length();
+  game.side_pots = vector[];
+  
+  // Collect all unique bet amounts from active players (not folded)
+  let mut bet_levels = vector<u64>[];
+  let mut i = 0;
+  while (i < player_count) {
+    let player = game.players.borrow(i);
+    if (!player.is_folded && player.total_contributed > 0) {
+      if (!vector::contains(&bet_levels, &player.total_contributed)) {
+        bet_levels.push_back(player.total_contributed);
+      };
+    };
+    i = i + 1;
+  };
+  
+  // Sort bet levels in ascending order
+  sort_bet_levels(&mut bet_levels);
+  
+  // Create side pots for each bet level
+  let mut prev_level = 0u64;
+  let mut level_idx = 0;
+  while (level_idx < vector::length(&bet_levels)) {
+    let current_level = *vector::borrow(&bet_levels, level_idx);
+    let pot_contribution_per_player = current_level - prev_level;
+    
+    // Find eligible players for this pot level
+    let mut eligible_players = vector<u64>[];
+    let mut j = 0;
+    while (j < player_count) {
+      let player = game.players.borrow(j);
+      if (!player.is_folded && player.total_contributed >= current_level) {
+        eligible_players.push_back(j);
+      };
+      j = j + 1;
+    };
+    
+    // Calculate pot amount
+    let pot_amount = pot_contribution_per_player * vector::length(&eligible_players);
+    
+    if (pot_amount > 0) {
+      let side_pot = SidePot {
+        amount: pot_amount,
+        eligible_players,
+      };
+      game.side_pots.push_back(side_pot);
+    };
+    
+    prev_level = current_level;
+    level_idx = level_idx + 1;
+  };
+}
+
+// Sort bet levels in ascending order
+fun sort_bet_levels(levels: &mut vector<u64>) {
+  let len = vector::length(levels);
+  let mut i = 0;
+  while (i < len) {
+    let mut j = i + 1;
+    while (j < len) {
+      if (*vector::borrow(levels, i) > *vector::borrow(levels, j)) {
+        vector::swap(levels, i, j);
+      };
+      j = j + 1;
+    };
+    i = i + 1;
+  };
+}
+
+// Rotate dealer position and reset for new hand
+public entry fun start_new_hand(game: &mut PokerGame, ctx: &mut TxContext) {
+  // Can only start new hand if current game is over
+  if (game.state != STATE_GAME_OVER) {
+    abort EInvalidGameState
+  };
+  
+  // Only owner can start new hand
+  if (ctx.sender() != game.owner) {
+    abort EInvalidPlayer
+  };
+  
+  let player_count = game.players.length();
+  if (player_count < MIN_PLAYERS) {
+    abort EInvalidPlayerCount
+  };
+  
+  // Rotate dealer position
+  game.dealer_position = (game.dealer_position + 1) % player_count;
+  
+  // Reset game state for new hand
+  reset_for_new_hand(game);
+  
+  // Initialize and shuffle deck with simple rotation-based shuffle
+  initialize_deck(game);
+  simple_shuffle_deck(game);
+  
+  // Deal new cards
+  deal_player_cards(game);
+  
+  // Collect blinds with rotation
+  collect_blinds(game);
+  
+  // Set game state to pre-flop
+  game.state = STATE_PRE_FLOP;
+  
+  // Set current player (after big blind)
+  game.current_player = (game.dealer_position + 3) % player_count;
+  game.last_raise_position = (game.dealer_position + 2) % player_count;
+  
+  // Emit events
+  let game_id = game.id.to_inner();
+  sui::event::emit(GameStarted { game_id, num_players: player_count });
+  sui::event::emit(RoundChanged { game_id, new_state: game.state });
+}
+
+// Simple shuffle without external randomness for new hands
+fun simple_shuffle_deck(game: &mut PokerGame) {
+  let deck_size = vector::length(&game.deck);
+  let mut i = 0;
+  
+  // Simple deterministic shuffle based on dealer position
+  while (i < deck_size) {
+    let j = (i + game.dealer_position + 7) % deck_size;
+    if (i != j) {
+      game.deck.swap(i, j);
+    };
+    i = i + 1;
+  };
+}
+
+// Reset all game state for a new hand
+fun reset_for_new_hand(game: &mut PokerGame) {
+  let player_count = game.players.length();
+  let mut i = 0;
+  
+  // Reset all player states
+  while (i < player_count) {
+    let player = game.players.borrow_mut(i);
+    player.cards = vector[];
+    player.current_bet = 0;
+    player.total_contributed = 0;
+    player.is_folded = false;
+    player.is_all_in = false;
+    i = i + 1;
+  };
+  
+  // Reset game state
+  game.community_cards = vector[];
+  game.side_pots = vector[];
+  game.current_bet = 0;
+  game.last_raise_position = 0;
+}
+
 fun count_active_players(game: &PokerGame): u64 {
   let player_count = game.players.length();
   let mut active_players = 0;
@@ -779,110 +950,119 @@ fun distribute_pot(game: &mut PokerGame) {
       i = i + 1;
     }
   } else {
-    // Evaluate poker hands to determine winners
-    let pot_amount = balance::value(&game.pot);
-    if (pot_amount == 0) {
-      // No pot to distribute
-      return
-    };
+    // Create side pots for all-in scenarios
+    create_side_pots(game);
     
-    // Build list of active players with their hands
-    let mut active_player_indices = vector::empty<u64>();
-    let mut active_player_hands = vector::empty<HandRank>();
-    let mut active_player_addresses = vector::empty<address>();
+    // Distribute each side pot
+    let pot_count = vector::length(&game.side_pots);
+    let mut pot_idx = 0;
     
-    let mut i = 0;
-    while (i < player_count) {
-      let player = game.players.borrow(i);
-      if (!player.is_folded) {
-        // Create 7-card hand (2 hole cards + 5 community cards)
-        let mut hand_cards = vector::empty<Card>();
-        hand_cards.push_back(player.cards[0]);
-        hand_cards.push_back(player.cards[1]);
+    while (pot_idx < pot_count) {
+      let side_pot = vector::borrow(&game.side_pots, pot_idx);
+      let eligible_players = &side_pot.eligible_players;
+      let pot_amount = side_pot.amount;
+      
+      if (pot_amount == 0 || vector::length(eligible_players) == 0) {
+        pot_idx = pot_idx + 1;
+        continue
+      };
+      
+      // Evaluate hands for eligible players only
+      let mut eligible_hands = vector::empty<HandRank>();
+      let mut eligible_addresses = vector::empty<address>();
+      
+      let mut e = 0;
+      while (e < vector::length(eligible_players)) {
+        let player_idx = *vector::borrow(eligible_players, e);
+        let player = game.players.borrow(player_idx);
         
-        let mut j = 0;
-        while (j < vector::length(&game.community_cards)) {
-          hand_cards.push_back(game.community_cards[j]);
-          j = j + 1;
+        if (!player.is_folded) {
+          // Create 7-card hand (2 hole cards + 5 community cards)
+          let mut hand_cards = vector::empty<Card>();
+          hand_cards.push_back(player.cards[0]);
+          hand_cards.push_back(player.cards[1]);
+          
+          let mut j = 0;
+          while (j < vector::length(&game.community_cards)) {
+            hand_cards.push_back(game.community_cards[j]);
+            j = j + 1;
+          };
+          
+          let hand_rank = evaluate_hand(&hand_cards);
+          eligible_hands.push_back(hand_rank);
+          eligible_addresses.push_back(player.addr);
         };
-        
-        let hand_rank = evaluate_hand(&hand_cards);
-        active_player_indices.push_back(i);
-        active_player_hands.push_back(hand_rank);
-        active_player_addresses.push_back(player.addr);
+        e = e + 1;
       };
-      i = i + 1;
-    };
-    
-    // Find the best hand(s) - there could be ties
-    let mut best_hand_indices = vector::empty<u64>();
-    
-    if (vector::length(&active_player_hands) > 0) {
-      // Start with first hand as best
-      best_hand_indices.push_back(0);
       
-      // Compare with remaining hands
-      let mut k = 1;
-      while (k < vector::length(&active_player_hands)) {
-        let current_hand = vector::borrow(&active_player_hands, k);
-        let best_hand = vector::borrow(&active_player_hands, *vector::borrow(&best_hand_indices, 0));
+      // Find best hands among eligible players
+      let mut best_hand_indices = vector::empty<u64>();
+      
+      if (vector::length(&eligible_hands) > 0) {
+        // Start with first hand as best
+        best_hand_indices.push_back(0);
         
-        if (compare_hands(current_hand, best_hand)) {
-          // Current hand is better, clear best_hand_indices and add current
-          best_hand_indices = vector::empty<u64>();
-          best_hand_indices.push_back(k);
-        } else if (!compare_hands(best_hand, current_hand)) {
-          // Tie (neither hand is better), add to best_hand_indices
-          best_hand_indices.push_back(k);
+        // Compare with remaining hands
+        let mut k = 1;
+        while (k < vector::length(&eligible_hands)) {
+          let current_hand = vector::borrow(&eligible_hands, k);
+          let best_hand = vector::borrow(&eligible_hands, *vector::borrow(&best_hand_indices, 0));
+          
+          if (compare_hands(current_hand, best_hand)) {
+            // Current hand is better
+            best_hand_indices = vector::empty<u64>();
+            best_hand_indices.push_back(k);
+          } else if (!compare_hands(best_hand, current_hand)) {
+            // Tie
+            best_hand_indices.push_back(k);
+          };
+          
+          k = k + 1;
         };
-        // If best_hand beats current_hand, do nothing
-        
-        k = k + 1;
-      };
-    };
-    
-    // Distribute pot among winners
-    let winner_count = vector::length(&best_hand_indices);
-    if (winner_count > 0) {
-      let share = pot_amount / winner_count;
-      let mut total_distributed = 0;
-      
-      let mut w = 0;
-      while (w < winner_count) {
-        let hand_idx = *vector::borrow(&best_hand_indices, w);
-        let player_idx = *vector::borrow(&active_player_indices, hand_idx);
-        let winner_addr = *vector::borrow(&active_player_addresses, hand_idx);
-        
-        winners.push_back(winner_addr);
-        amounts.push_back(share);
-        
-        // Credit the share to player balance
-        let p = game.players.borrow_mut(player_idx);
-        p.balance = p.balance + share;
-        total_distributed = total_distributed + share;
-        
-        w = w + 1;
       };
       
-      // Handle any remaining amount (due to division remainder)
-      let remaining = pot_amount - total_distributed;
-      if (remaining > 0) {
-        // Add remaining to first winner
-        let first_hand_idx = *vector::borrow(&best_hand_indices, 0);
-        let first_player_idx = *vector::borrow(&active_player_indices, first_hand_idx);
-        let p = game.players.borrow_mut(first_player_idx);
-        p.balance = p.balance + remaining;
+      // Distribute this side pot among winners
+      let winner_count = vector::length(&best_hand_indices);
+      if (winner_count > 0) {
+        let share = pot_amount / winner_count;
         
-        // Update the first winner's amount in the event
-        let first_amount = vector::borrow_mut(&mut amounts, 0);
-        *first_amount = *first_amount + remaining;
+        let mut w = 0;
+        while (w < winner_count) {
+          let hand_idx = *vector::borrow(&best_hand_indices, w);
+          let eligible_idx = *vector::borrow(eligible_players, hand_idx);
+          let winner_addr = *vector::borrow(&eligible_addresses, hand_idx);
+          
+          // Check if this winner is already in our winners list
+          let mut found = false;
+          let mut winners_idx = 0;
+          while (winners_idx < vector::length(&winners)) {
+            if (*vector::borrow(&winners, winners_idx) == winner_addr) {
+              // Add to existing amount
+              let current_amount = vector::borrow_mut(&mut amounts, winners_idx);
+              *current_amount = *current_amount + share;
+              found = true;
+              break
+            };
+            winners_idx = winners_idx + 1;
+          };
+          
+          if (!found) {
+            // Add new winner
+            winners.push_back(winner_addr);
+            amounts.push_back(share);
+          };
+          
+          // Credit to player balance
+          let p = game.players.borrow_mut(eligible_idx);
+          p.balance = p.balance + share;
+          
+          w = w + 1;
+        };
       };
+      
+      pot_idx = pot_idx + 1;
     };
   };
-
-  // In a real implementation, we would transfer the actual SUI balance to winners
-  // For testing purposes, we keep the balance in the pot and only track amounts in player structs
-  // The pot balance represents the contract's SUI holdings
 
   // Emit game ended event
   let game_id = game.id.to_inner();
