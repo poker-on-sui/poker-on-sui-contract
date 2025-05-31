@@ -382,6 +382,11 @@ public entry fun bet(
     abort EInvalidAction
   };
 
+  // Validate minimum bet amount
+  if (amount < game.min_bet) {
+    abort EInvalidBet
+  };
+
   let player = std::vector::borrow_mut(&mut game.players, player_index);
   
   // Check if player has enough balance for bet
@@ -726,10 +731,6 @@ fun deal_community_cards(game: &mut PokerGame, count: u64) {
 }
 
 fun distribute_pot(game: &mut PokerGame) {
-  // In a real implementation, this would evaluate hands and distribute the pot
-  // For simplicity, we'll just find the single non-folded player or
-  // simulate a simple hand evaluation
-
   let player_count = game.players.length();
   let active_count = count_active_players(game);
 
@@ -748,20 +749,28 @@ fun distribute_pot(game: &mut PokerGame) {
         winners.push_back(winner_addr);
         amounts.push_back(pot_amount);
 
-        // Update player balance instead of direct transfer
-        // In a real game, we would use sui::transfer to send funds
+        // Credit the pot amount to the winner's balance
         let p = game.players.borrow_mut(i);
         p.balance = p.balance + pot_amount;
+        
         break
       };
       i = i + 1;
     }
   } else {
-    // For a simple implementation, distribute pot equally among all active players // In a real implementation, this would evaluate poker hands
+    // For a simple implementation, distribute pot equally among all active players
+    // In a real implementation, this would evaluate poker hands
     let pot_amount = balance::value(&game.pot);
+    if (pot_amount == 0) {
+      // No pot to distribute
+      return
+    };
+    
     let share = pot_amount / active_count;
+    let mut total_distributed = 0;
+    
     let mut i = 0;
-    while (i < player_count && share > 0) {
+    while (i < player_count) {
       let player = game.players.borrow(i);
       if (!player.is_folded) {
         let winner_addr = player.addr;
@@ -769,30 +778,38 @@ fun distribute_pot(game: &mut PokerGame) {
         winners.push_back(winner_addr);
         amounts.push_back(share);
 
-        // Update player balance instead of direct transfer
+        // Credit the share to player balance
         let p = game.players.borrow_mut(i);
         p.balance = p.balance + share;
+        total_distributed = total_distributed + share;
       };
       i = i + 1;
-    }; // Handle any remaining dust in the pot (due to division)
-    let remaining = balance::value(&game.pot);
+    };
+    
+    // Handle any remaining amount (due to division remainder)
+    let remaining = pot_amount - total_distributed;
     if (remaining > 0 && winners.length() > 0) {
-      // Add remaining to first winner's share
-      let mut first_winner_idx = 0;
+      // Add remaining to first winner
       let mut j = 0;
       while (j < player_count) {
         let player = game.players.borrow(j);
         if (!player.is_folded) {
-          first_winner_idx = j;
+          let p = game.players.borrow_mut(j);
+          p.balance = p.balance + remaining;
+          
+          // Update the first winner's amount in the event
+          let first_amount = amounts.borrow_mut(0);
+          *first_amount = *first_amount + remaining;
           break
         };
         j = j + 1;
       };
-
-      let p = game.players.borrow_mut(first_winner_idx);
-      p.balance = p.balance + remaining;
-    }
+    };
   };
+
+  // In a real implementation, we would transfer the actual SUI balance to winners
+  // For testing purposes, we keep the balance in the pot and only track amounts in player structs
+  // The pot balance represents the contract's SUI holdings
 
   // Emit game ended event
   let game_id = game.id.to_inner();
@@ -802,17 +819,69 @@ fun distribute_pot(game: &mut PokerGame) {
   game.state = STATE_GAME_OVER;
 }
 
-// Debug function to check current player
-public fun get_current_player(game: &PokerGame): u64 {
-  game.current_player
+// Additional validation and utility functions
+
+/// Reset game for a new hand
+entry fun start_new_hand(game: &mut PokerGame, r: &Random, ctx: &mut TxContext) {
+  // Only owner can start new hand
+  if (ctx.sender() != game.owner) abort EInvalidPlayer;
+  
+  // Game must be over to start new hand
+  if (game.state != STATE_GAME_OVER) abort EInvalidGameState;
+  
+  // Remove players with zero balance
+  let mut i = 0;
+  while (i < game.players.length()) {
+    let player = game.players.borrow(i);
+    if (player.balance == 0) {
+      game.players.remove(i);
+    } else {
+      i = i + 1;
+    }
+  };
+  
+  // Check if we still have enough players
+  if (game.players.length() < MIN_PLAYERS) abort EInvalidPlayerCount;
+  
+  // Move dealer position
+  game.dealer_position = (game.dealer_position + 1) % game.players.length();
+  
+  // Reset all players for new hand
+  let player_count = game.players.length();
+  let mut j = 0;
+  while (j < player_count) {
+    let player = game.players.borrow_mut(j);
+    player.cards = vector::empty();
+    player.current_bet = 0;
+    player.is_folded = false;
+    player.is_all_in = false;
+    j = j + 1;
+  };
+  
+  // Start new game
+  let seed = generate_seed(r, ctx);
+  start_game_with_seed(game, seed, ctx);
 }
 
-public fun get_player_count(game: &PokerGame): u64 {
-  game.players.length()
+/// Get player information (for frontend)
+public fun get_player_info(game: &PokerGame, player_addr: address): (bool, u64, u64, bool, bool) {
+  let player_idx = find_player_index(game, player_addr);
+  if (player_idx >= game.players.length()) {
+    return (false, 0, 0, false, false)
+  };
+  
+  let player = game.players.borrow(player_idx);
+  (true, player.balance, player.current_bet, player.is_folded, player.is_all_in)
 }
 
-public fun get_dealer_position(game: &PokerGame): u64 {
-  game.dealer_position
+/// Get game state information
+public fun get_game_state(game: &PokerGame): (u8, u64, u64, u64, u64) {
+  (game.state, game.current_bet, game.current_player, game.dealer_position, balance::value(&game.pot))
+}
+
+/// Get community cards count (cards are private in real poker)
+public fun get_community_cards_count(game: &PokerGame): u64 {
+  game.community_cards.length()
 }
 
 // Hand evaluation would be implemented here in a full version of the contract
