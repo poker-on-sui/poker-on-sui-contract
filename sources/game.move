@@ -117,13 +117,15 @@ public struct GameEnded has copy, drop {
 // Create a new poker game
 public entry fun create_game(
   buy_in: u64,
-  min_bet: u64,
-  small_blind: u64,
-  big_blind: u64,
   ctx: &mut TxContext,
 ) {
   let id = sui::object::new(ctx);
   let game_id = sui::object::uid_to_inner(&id);
+
+  // Calculate derived values from buy_in
+  let min_bet = buy_in / 20; // 5% of buy_in
+  let small_blind = min_bet / 2; // 50% of min_bet
+  let big_blind = min_bet; // 100% of min_bet
 
   let game = PokerGame {
     id,

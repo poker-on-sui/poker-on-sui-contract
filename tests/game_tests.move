@@ -17,12 +17,13 @@ const SEED_LENGTH: u64 = 32;
 
 // Game configuration constants
 const BUY_IN: u64 = 1000000000; // 1 SUI
-const MIN_BET: u64 = 10000000; // 0.01 SUI
-const SMALL_BLIND: u64 = 10000000; // 0.01 SUI
-const BIG_BLIND: u64 = 20000000; // 0.02 SUI
+const MIN_BET: u64 = 50000000; // 5% of buy_in
 
 // Error codes from the poker module (only keeping used ones for warnings)
-// Unused constants removed to eliminate compiler warnings
+const EInsufficientBuyIn: u64 = 2;
+const EInvalidPlayer: u64 = 4;
+const EAlreadyJoined: u64 = 9;
+const EInvalidSeed: u64 = 10;
 
 // Helper function to set up a test scenario with a created game
 fun setup_game(): Scenario {
@@ -31,9 +32,6 @@ fun setup_game(): Scenario {
     // Create the poker game
     game::create_game(
       BUY_IN,
-      MIN_BET,
-      SMALL_BLIND,
-      BIG_BLIND,
       ts::ctx(&mut scenario),
     );
   };
@@ -65,9 +63,6 @@ fun test_create_game() {
     // Create a game
     game::create_game(
       BUY_IN,
-      MIN_BET,
-      SMALL_BLIND,
-      BIG_BLIND,
       ts::ctx(&mut scenario),
     );
   };
@@ -107,7 +102,7 @@ fun test_join_game() {
 }
 
 #[test]
-#[expected_failure(abort_code = 2, location = game)]
+#[expected_failure(abort_code = EInsufficientBuyIn, location = game)]
 // EInsufficientBuyIn from poker module
 fun test_join_game_insufficient_buy_in() {
   let mut scenario = setup_game();
@@ -125,7 +120,7 @@ fun test_join_game_insufficient_buy_in() {
 }
 
 #[test]
-#[expected_failure(abort_code = 9, location = game)]
+#[expected_failure(abort_code = EAlreadyJoined, location = game)]
 // EAlreadyJoined from poker module
 fun test_join_game_already_joined() {
   let mut scenario = setup_game();
@@ -189,7 +184,7 @@ fun test_start_game() {
 }
 
 #[test]
-#[expected_failure(abort_code = 4, location = game)]
+#[expected_failure(abort_code = EInvalidPlayer, location = game)]
 // EInvalidPlayer from poker module
 fun test_start_game_not_owner() {
   let mut scenario = setup_game();
@@ -228,7 +223,7 @@ fun test_start_game_not_owner() {
 }
 
 #[test]
-#[expected_failure(abort_code = 10, location = game)]
+#[expected_failure(abort_code = EInvalidSeed, location = game)]
 fun test_start_game_invalid_seed() {
   let mut scenario = setup_game();
 
@@ -329,7 +324,7 @@ fun test_player_actions() {
   {
     let mut game = ts::take_shared<PokerGame>(&scenario);
     // Raise to 3x big blind
-    game::player_action(&mut game, 4, BIG_BLIND * 3, ts::ctx(&mut scenario)); // ACTION_RAISE = 4
+    game::player_action(&mut game, 4, MIN_BET * 3, ts::ctx(&mut scenario)); // ACTION_RAISE = 4
     ts::return_shared(game);
   };
 
