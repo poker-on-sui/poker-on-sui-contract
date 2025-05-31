@@ -32,6 +32,7 @@ This project is a Move smart contract implementation of a Texas Hold'em poker ga
 - Define error constants using hex values (e.g., `const EInvalidPlayer: u64 = 0x0004`)
 - Use structured events for state change notifications
 - Implement proper validation at function entry points
+- Prefer method syntax (object-oriented style, available in Move 2024) over module function call
 
 ### Code Organization
 
