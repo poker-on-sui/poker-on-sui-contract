@@ -251,6 +251,23 @@ public entry fun join_game(
   sui::event::emit(PlayerJoined { game_id, player: player_addr });
 }
 
+public entry fun cancel_game(game: &mut PokerGame, ctx: &mut TxContext) {
+  // Only owner can cancel the game
+  if (ctx.sender() != game.owner) {
+    abort EInvalidPlayer
+  };
+
+  // Check if game is still waiting for players
+  if (game.state != STATE_WAITING_FOR_PLAYERS) {
+    abort EInvalidGameState
+  };
+
+  // Emit event and mark game as ended
+  let game_id = sui::object::uid_to_inner(&game.id);
+  sui::event::emit(GameEnded { game_id, winners: vector[], amounts: vector[] });
+  game.state = STATE_GAME_OVER;
+}
+
 // Start the poker game if we have enough players
 entry fun start_game(game: &mut PokerGame, r: &Random, ctx: &mut TxContext) {
   let seed = generate_seed(r, ctx);
