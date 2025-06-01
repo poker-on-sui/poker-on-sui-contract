@@ -29,8 +29,9 @@ const EInvalidSeed: u64 = 10;
 fun setup_game(): Scenario {
   let mut scenario = ts::begin(PLAYER0);
 
-  // Create the poker game
-  game::create_game(BUY_IN, scenario.ctx());
+  // Create the poker game with creator automatically joining
+  let coin = mint_sui(BUY_IN, scenario.ctx());
+  game::create_game(BUY_IN, coin, scenario.ctx());
 
   scenario
 }
@@ -57,9 +58,11 @@ fun mint_sui(amount: u64, ctx: &mut TxContext): Coin<SUI> {
 fun test_create_game() {
   let mut scenario = ts::begin(PLAYER0);
   {
-    // Create a game
+    // Create a game with creator automatically joining
+    let coin = mint_sui(BUY_IN, scenario.ctx());
     game::create_game(
       BUY_IN,
+      coin,
       scenario.ctx(),
     );
   };

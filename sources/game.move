@@ -62,8 +62,8 @@ const HAND_ROYAL_FLUSH: u8 = 9;
 
 // Hand evaluation result
 public struct HandRank has copy, drop, store {
-  hand_type: u8,      // Type of hand (0-9)
-  primary_value: u8,   // Primary value for comparison (e.g., pair value, high card)
+  hand_type: u8, // Type of hand (0-9)
+  primary_value: u8, // Primary value for comparison (e.g., pair value, high card)
   secondary_value: u8, // Secondary value (e.g., kicker for pair, second pair for two pair)
   kickers: vector<u8>, // Additional kickers for tie-breaking
 }
@@ -140,7 +140,7 @@ public struct GameEnded has copy, drop {
 }
 
 // Create a new poker game
-public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
+public entry fun create_game(buy_in: u64, payment: Coin<SUI>, ctx: &mut TxContext) {
   let id = sui::object::new(ctx);
   let game_id = sui::object::uid_to_inner(&id);
 
@@ -148,6 +148,16 @@ public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
   let min_bet = buy_in / 20; // 5% of buy_in
   let small_blind = min_bet / 2; // 50% of min_bet
   let big_blind = min_bet; // 100% of min_bet
+
+  // Check buy-in amount for creator
+  if (payment.value() < buy_in) {
+    abort EInsufficientBuyIn
+  };
+
+  // Create the initial pot with creator's payment
+  let mut pot = balance::zero<SUI>();
+  let payment_balance = payment.into_balance();
+  pot.join(payment_balance);
 
   let game = PokerGame {
     id,
@@ -164,7 +174,7 @@ public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
     ],
     deck: vector[],
     community_cards: vector[],
-    pot: balance::zero(),
+    pot,
     side_pots: vector[],
     buy_in,
     min_bet,
@@ -179,6 +189,7 @@ public entry fun create_game(buy_in: u64, ctx: &mut TxContext) {
   };
 
   sui::event::emit(GameCreated { game_id, buy_in });
+  sui::event::emit(PlayerJoined { game_id, player: ctx.sender() });
 
   sui::transfer::share_object(game);
 }
@@ -347,10 +358,7 @@ fun complete_player_action(
 }
 
 // Player action: fold
-public entry fun fold(
-  game: &mut PokerGame,
-  ctx: &mut TxContext,
-) {
+public entry fun fold(game: &mut PokerGame, ctx: &mut TxContext) {
   let player_index = validate_player_action(game, ctx);
   let player_addr = ctx.sender();
 
@@ -361,10 +369,7 @@ public entry fun fold(
 }
 
 // Player action: check
-public entry fun check(
-  game: &mut PokerGame,
-  ctx: &mut TxContext,
-) {
+public entry fun check(game: &mut PokerGame, ctx: &mut TxContext) {
   let player_index = validate_player_action(game, ctx);
   let player_addr = ctx.sender();
 
@@ -377,16 +382,13 @@ public entry fun check(
 }
 
 // Player action: call
-public entry fun call(
-  game: &mut PokerGame,
-  ctx: &mut TxContext,
-) {
+public entry fun call(game: &mut PokerGame, ctx: &mut TxContext) {
   let player_index = validate_player_action(game, ctx);
   let player_addr = ctx.sender();
 
   let player = std::vector::borrow_mut(&mut game.players, player_index);
   let call_amount = game.current_bet - player.current_bet;
-  
+
   if (call_amount > player.balance) {
     abort EInvalidBet
   };
@@ -402,11 +404,7 @@ public entry fun call(
 }
 
 // Player action: bet
-public entry fun bet(
-  game: &mut PokerGame,
-  amount: u64,
-  ctx: &mut TxContext,
-) {
+public entry fun bet(game: &mut PokerGame, amount: u64, ctx: &mut TxContext) {
   let player_index = validate_player_action(game, ctx);
   let player_addr = ctx.sender();
 
@@ -421,7 +419,7 @@ public entry fun bet(
   };
 
   let player = std::vector::borrow_mut(&mut game.players, player_index);
-  
+
   // Check if player has enough balance for bet
   if (amount > player.balance + player.current_bet) {
     abort EInvalidBet
@@ -442,11 +440,7 @@ public entry fun bet(
 }
 
 // Player action: raise
-public entry fun raise(
-  game: &mut PokerGame,
-  amount: u64,
-  ctx: &mut TxContext,
-) {
+public entry fun raise(game: &mut PokerGame, amount: u64, ctx: &mut TxContext) {
   let player_index = validate_player_action(game, ctx);
   let player_addr = ctx.sender();
 
@@ -459,7 +453,7 @@ public entry fun raise(
   };
 
   let player = std::vector::borrow_mut(&mut game.players, player_index);
-  
+
   // Check if player has enough balance for raise
   if (amount > player.balance + player.current_bet) {
     abort EInvalidBet
@@ -746,7 +740,7 @@ fun reset_player_bets(game: &mut PokerGame) {
 fun create_side_pots(game: &mut PokerGame) {
   let player_count = game.players.length();
   game.side_pots = vector[];
-  
+
   // Collect all unique bet amounts from active players (not folded)
   let mut bet_levels = vector<u64>[];
   let mut i = 0;
@@ -759,17 +753,17 @@ fun create_side_pots(game: &mut PokerGame) {
     };
     i = i + 1;
   };
-  
+
   // Sort bet levels in ascending order
   sort_bet_levels(&mut bet_levels);
-  
+
   // Create side pots for each bet level
   let mut prev_level = 0u64;
   let mut level_idx = 0;
   while (level_idx < vector::length(&bet_levels)) {
     let current_level = *vector::borrow(&bet_levels, level_idx);
     let pot_contribution_per_player = current_level - prev_level;
-    
+
     // Find eligible players for this pot level
     let mut eligible_players = vector<u64>[];
     let mut j = 0;
@@ -780,10 +774,11 @@ fun create_side_pots(game: &mut PokerGame) {
       };
       j = j + 1;
     };
-    
+
     // Calculate pot amount
-    let pot_amount = pot_contribution_per_player * vector::length(&eligible_players);
-    
+    let pot_amount =
+      pot_contribution_per_player * vector::length(&eligible_players);
+
     if (pot_amount > 0) {
       let side_pot = SidePot {
         amount: pot_amount,
@@ -791,7 +786,7 @@ fun create_side_pots(game: &mut PokerGame) {
       };
       game.side_pots.push_back(side_pot);
     };
-    
+
     prev_level = current_level;
     level_idx = level_idx + 1;
   };
@@ -819,40 +814,40 @@ public entry fun start_new_hand(game: &mut PokerGame, ctx: &mut TxContext) {
   if (game.state != STATE_GAME_OVER) {
     abort EInvalidGameState
   };
-  
+
   // Only owner can start new hand
   if (ctx.sender() != game.owner) {
     abort EInvalidPlayer
   };
-  
+
   let player_count = game.players.length();
   if (player_count < MIN_PLAYERS) {
     abort EInvalidPlayerCount
   };
-  
+
   // Rotate dealer position
   game.dealer_position = (game.dealer_position + 1) % player_count;
-  
+
   // Reset game state for new hand
   reset_for_new_hand(game);
-  
+
   // Initialize and shuffle deck with simple rotation-based shuffle
   initialize_deck(game);
   simple_shuffle_deck(game);
-  
+
   // Deal new cards
   deal_player_cards(game);
-  
+
   // Collect blinds with rotation
   collect_blinds(game);
-  
+
   // Set game state to pre-flop
   game.state = STATE_PRE_FLOP;
-  
+
   // Set current player (after big blind)
   game.current_player = (game.dealer_position + 3) % player_count;
   game.last_raise_position = (game.dealer_position + 2) % player_count;
-  
+
   // Emit events
   let game_id = game.id.to_inner();
   sui::event::emit(GameStarted { game_id, num_players: player_count });
@@ -863,7 +858,7 @@ public entry fun start_new_hand(game: &mut PokerGame, ctx: &mut TxContext) {
 fun simple_shuffle_deck(game: &mut PokerGame) {
   let deck_size = vector::length(&game.deck);
   let mut i = 0;
-  
+
   // Simple deterministic shuffle based on dealer position
   while (i < deck_size) {
     let j = (i + game.dealer_position + 7) % deck_size;
@@ -878,7 +873,7 @@ fun simple_shuffle_deck(game: &mut PokerGame) {
 fun reset_for_new_hand(game: &mut PokerGame) {
   let player_count = game.players.length();
   let mut i = 0;
-  
+
   // Reset all player states
   while (i < player_count) {
     let player = game.players.borrow_mut(i);
@@ -889,7 +884,7 @@ fun reset_for_new_hand(game: &mut PokerGame) {
     player.is_all_in = false;
     i = i + 1;
   };
-  
+
   // Reset game state
   game.community_cards = vector[];
   game.side_pots = vector[];
@@ -944,7 +939,7 @@ fun distribute_pot(game: &mut PokerGame) {
         // Credit the pot amount to the winner's balance
         let p = game.players.borrow_mut(i);
         p.balance = p.balance + pot_amount;
-        
+
         break
       };
       i = i + 1;
@@ -952,62 +947,65 @@ fun distribute_pot(game: &mut PokerGame) {
   } else {
     // Create side pots for all-in scenarios
     create_side_pots(game);
-    
+
     // Distribute each side pot
     let pot_count = vector::length(&game.side_pots);
     let mut pot_idx = 0;
-    
+
     while (pot_idx < pot_count) {
       let side_pot = vector::borrow(&game.side_pots, pot_idx);
       let eligible_players = &side_pot.eligible_players;
       let pot_amount = side_pot.amount;
-      
+
       if (pot_amount == 0 || vector::length(eligible_players) == 0) {
         pot_idx = pot_idx + 1;
         continue
       };
-      
+
       // Evaluate hands for eligible players only
       let mut eligible_hands = vector::empty<HandRank>();
       let mut eligible_addresses = vector::empty<address>();
-      
+
       let mut e = 0;
       while (e < vector::length(eligible_players)) {
         let player_idx = *vector::borrow(eligible_players, e);
         let player = game.players.borrow(player_idx);
-        
+
         if (!player.is_folded) {
           // Create 7-card hand (2 hole cards + 5 community cards)
           let mut hand_cards = vector::empty<Card>();
           hand_cards.push_back(player.cards[0]);
           hand_cards.push_back(player.cards[1]);
-          
+
           let mut j = 0;
           while (j < vector::length(&game.community_cards)) {
             hand_cards.push_back(game.community_cards[j]);
             j = j + 1;
           };
-          
+
           let hand_rank = evaluate_hand(&hand_cards);
           eligible_hands.push_back(hand_rank);
           eligible_addresses.push_back(player.addr);
         };
         e = e + 1;
       };
-      
+
       // Find best hands among eligible players
       let mut best_hand_indices = vector::empty<u64>();
-      
+
       if (vector::length(&eligible_hands) > 0) {
         // Start with first hand as best
         best_hand_indices.push_back(0);
-        
+
         // Compare with remaining hands
         let mut k = 1;
         while (k < vector::length(&eligible_hands)) {
           let current_hand = vector::borrow(&eligible_hands, k);
-          let best_hand = vector::borrow(&eligible_hands, *vector::borrow(&best_hand_indices, 0));
-          
+          let best_hand = vector::borrow(
+            &eligible_hands,
+            *vector::borrow(&best_hand_indices, 0),
+          );
+
           if (compare_hands(current_hand, best_hand)) {
             // Current hand is better
             best_hand_indices = vector::empty<u64>();
@@ -1016,50 +1014,53 @@ fun distribute_pot(game: &mut PokerGame) {
             // Tie
             best_hand_indices.push_back(k);
           };
-          
+
           k = k + 1;
         };
       };
-      
+
       // Distribute this side pot among winners
       let winner_count = vector::length(&best_hand_indices);
       if (winner_count > 0) {
         let share = pot_amount / winner_count;
-        
+
         let mut w = 0;
         while (w < winner_count) {
           let hand_idx = *vector::borrow(&best_hand_indices, w);
           let eligible_idx = *vector::borrow(eligible_players, hand_idx);
           let winner_addr = *vector::borrow(&eligible_addresses, hand_idx);
-          
+
           // Check if this winner is already in our winners list
           let mut found = false;
           let mut winners_idx = 0;
           while (winners_idx < vector::length(&winners)) {
             if (*vector::borrow(&winners, winners_idx) == winner_addr) {
               // Add to existing amount
-              let current_amount = vector::borrow_mut(&mut amounts, winners_idx);
+              let current_amount = vector::borrow_mut(
+                &mut amounts,
+                winners_idx,
+              );
               *current_amount = *current_amount + share;
               found = true;
               break
             };
             winners_idx = winners_idx + 1;
           };
-          
+
           if (!found) {
             // Add new winner
             winners.push_back(winner_addr);
             amounts.push_back(share);
           };
-          
+
           // Credit to player balance
           let p = game.players.borrow_mut(eligible_idx);
           p.balance = p.balance + share;
-          
+
           w = w + 1;
         };
       };
-      
+
       pot_idx = pot_idx + 1;
     };
   };
@@ -1074,440 +1075,447 @@ fun distribute_pot(game: &mut PokerGame) {
 
 // ===== Hand Evaluation Functions =====
 
-  /// Evaluate a 7-card hand (5 community + 2 hole cards) and return the best 5-card hand
-  fun evaluate_hand(cards: &vector<Card>): HandRank {
-    assert!(vector::length(cards) == 7, EInvalidHandSize);
-    
-    // Convert cards to ranks and suits for evaluation
-    let mut ranks = vector::empty<u8>();
-    let mut suits = vector::empty<u8>();
-    
-    let mut i = 0;
-    while (i < 7) {
-      let card = vector::borrow(cards, i);
-      vector::push_back(&mut ranks, card.value);
-      vector::push_back(&mut suits, card.suit);
-      i = i + 1;
-    };
-    
-    // Sort ranks for easier evaluation
-    sort_ranks(&mut ranks);
-    
-    // Check for flush
-    let flush_suit = check_flush(&suits);
-    let is_flush = flush_suit != 255; // 255 indicates no flush
-    
-    // Check for straight
-    let straight_high = check_straight(&ranks);
-    let is_straight = straight_high != 0;
-    
-    // Check for royal flush
-    if (is_flush && is_straight && straight_high == 14) {
-      return HandRank {
-        hand_type: HAND_ROYAL_FLUSH,
-        primary_value: 14,
-        secondary_value: 0,
-        kickers: vector::empty(),
-      }
-    };
-    
-    // Check for straight flush
-    if (is_flush && is_straight) {
-      return HandRank {
-        hand_type: HAND_STRAIGHT_FLUSH,
-        primary_value: straight_high,
-        secondary_value: 0,
-        kickers: vector::empty(),
-      }
-    };
-    
-    // Count rank frequencies
-    let rank_counts = count_ranks(&ranks);
-    
-    // Check for four of a kind
-    let four_kind = find_four_of_a_kind(&rank_counts);
-    if (four_kind != 0) {
-      let kicker = find_highest_kicker(&ranks, four_kind, 1);
-      return HandRank {
-        hand_type: HAND_FOUR_OF_A_KIND,
-        primary_value: four_kind,
-        secondary_value: 0,
-        kickers: vector[kicker],
-      }
-    };
-    
-    // Check for full house
-    let (three_kind, pair_value) = find_full_house(&rank_counts);
-    if (three_kind != 0 && pair_value != 0) {
-      return HandRank {
-        hand_type: HAND_FULL_HOUSE,
-        primary_value: three_kind,
-        secondary_value: pair_value,
-        kickers: vector::empty(),
-      }
-    };
-    
-    // Check for flush
-    if (is_flush) {
-      let flush_kickers = get_flush_kickers(&ranks, &suits, flush_suit);
-      return HandRank {
-        hand_type: HAND_FLUSH,
-        primary_value: *vector::borrow(&flush_kickers, 0),
-        secondary_value: 0,
-        kickers: flush_kickers,
-      }
-    };
-    
-    // Check for straight
-    if (is_straight) {
-      return HandRank {
-        hand_type: HAND_STRAIGHT,
-        primary_value: straight_high,
-        secondary_value: 0,
-        kickers: vector::empty(),
-      }
-    };
-    
-    // Check for three of a kind
-    if (three_kind != 0) {
-      let kickers = find_kickers(&ranks, three_kind, 2);
-      return HandRank {
-        hand_type: HAND_THREE_OF_A_KIND,
-        primary_value: three_kind,
-        secondary_value: 0,
-        kickers,
-      }
-    };
-    
-    // Check for two pair
-    let pairs = find_pairs(&rank_counts);
-    if (vector::length(&pairs) >= 2) {
-      let high_pair = *vector::borrow(&pairs, 0);
-      let low_pair = *vector::borrow(&pairs, 1);
-      let kicker = find_highest_kicker(&ranks, high_pair, 1);
-      let kicker2 = find_highest_kicker(&ranks, low_pair, 1);
-      let final_kicker = if (kicker != low_pair && kicker != high_pair) kicker else kicker2;
-      
-      return HandRank {
-        hand_type: HAND_TWO_PAIR,
-        primary_value: high_pair,
-        secondary_value: low_pair,
-        kickers: vector[final_kicker],
-      }
-    };
-    
-    // Check for one pair
-    if (vector::length(&pairs) == 1) {
-      let pair_rank = *vector::borrow(&pairs, 0);
-      let kickers = find_kickers(&ranks, pair_rank, 3);
-      return HandRank {
-        hand_type: HAND_ONE_PAIR,
-        primary_value: pair_rank,
-        secondary_value: 0,
-        kickers,
-      }
-    };
-    
-    // High card
-    let kickers = get_high_card_kickers(&ranks);
-    HandRank {
-      hand_type: HAND_HIGH_CARD,
-      primary_value: *vector::borrow(&kickers, 0),
+/// Evaluate a 7-card hand (5 community + 2 hole cards) and return the best 5-card hand
+fun evaluate_hand(cards: &vector<Card>): HandRank {
+  assert!(vector::length(cards) == 7, EInvalidHandSize);
+
+  // Convert cards to ranks and suits for evaluation
+  let mut ranks = vector::empty<u8>();
+  let mut suits = vector::empty<u8>();
+
+  let mut i = 0;
+  while (i < 7) {
+    let card = vector::borrow(cards, i);
+    vector::push_back(&mut ranks, card.value);
+    vector::push_back(&mut suits, card.suit);
+    i = i + 1;
+  };
+
+  // Sort ranks for easier evaluation
+  sort_ranks(&mut ranks);
+
+  // Check for flush
+  let flush_suit = check_flush(&suits);
+  let is_flush = flush_suit != 255; // 255 indicates no flush
+
+  // Check for straight
+  let straight_high = check_straight(&ranks);
+  let is_straight = straight_high != 0;
+
+  // Check for royal flush
+  if (is_flush && is_straight && straight_high == 14) {
+    return HandRank {
+      hand_type: HAND_ROYAL_FLUSH,
+      primary_value: 14,
+      secondary_value: 0,
+      kickers: vector::empty(),
+    }
+  };
+
+  // Check for straight flush
+  if (is_flush && is_straight) {
+    return HandRank {
+      hand_type: HAND_STRAIGHT_FLUSH,
+      primary_value: straight_high,
+      secondary_value: 0,
+      kickers: vector::empty(),
+    }
+  };
+
+  // Count rank frequencies
+  let rank_counts = count_ranks(&ranks);
+
+  // Check for four of a kind
+  let four_kind = find_four_of_a_kind(&rank_counts);
+  if (four_kind != 0) {
+    let kicker = find_highest_kicker(&ranks, four_kind, 1);
+    return HandRank {
+      hand_type: HAND_FOUR_OF_A_KIND,
+      primary_value: four_kind,
+      secondary_value: 0,
+      kickers: vector[kicker],
+    }
+  };
+
+  // Check for full house
+  let (three_kind, pair_value) = find_full_house(&rank_counts);
+  if (three_kind != 0 && pair_value != 0) {
+    return HandRank {
+      hand_type: HAND_FULL_HOUSE,
+      primary_value: three_kind,
+      secondary_value: pair_value,
+      kickers: vector::empty(),
+    }
+  };
+
+  // Check for flush
+  if (is_flush) {
+    let flush_kickers = get_flush_kickers(&ranks, &suits, flush_suit);
+    return HandRank {
+      hand_type: HAND_FLUSH,
+      primary_value: *vector::borrow(&flush_kickers, 0),
+      secondary_value: 0,
+      kickers: flush_kickers,
+    }
+  };
+
+  // Check for straight
+  if (is_straight) {
+    return HandRank {
+      hand_type: HAND_STRAIGHT,
+      primary_value: straight_high,
+      secondary_value: 0,
+      kickers: vector::empty(),
+    }
+  };
+
+  // Check for three of a kind
+  if (three_kind != 0) {
+    let kickers = find_kickers(&ranks, three_kind, 2);
+    return HandRank {
+      hand_type: HAND_THREE_OF_A_KIND,
+      primary_value: three_kind,
       secondary_value: 0,
       kickers,
     }
-  }
+  };
 
-  /// Compare two hands and return true if hand1 wins
-  fun compare_hands(hand1: &HandRank, hand2: &HandRank): bool {
-    // Compare hand types first
-    if (hand1.hand_type != hand2.hand_type) {
-      return hand1.hand_type > hand2.hand_type
-    };
-    
-    // Same hand type, compare primary values
-    if (hand1.primary_value != hand2.primary_value) {
-      return hand1.primary_value > hand2.primary_value
-    };
-    
-    // Same primary value, compare secondary values
-    if (hand1.secondary_value != hand2.secondary_value) {
-      return hand1.secondary_value > hand2.secondary_value
-    };
-    
-    // Compare kickers
-    compare_kickers(&hand1.kickers, &hand2.kickers)
+  // Check for two pair
+  let pairs = find_pairs(&rank_counts);
+  if (vector::length(&pairs) >= 2) {
+    let high_pair = *vector::borrow(&pairs, 0);
+    let low_pair = *vector::borrow(&pairs, 1);
+    let kicker = find_highest_kicker(&ranks, high_pair, 1);
+    let kicker2 = find_highest_kicker(&ranks, low_pair, 1);
+    let final_kicker = if (kicker != low_pair && kicker != high_pair) kicker
+    else kicker2;
+
+    return HandRank {
+      hand_type: HAND_TWO_PAIR,
+      primary_value: high_pair,
+      secondary_value: low_pair,
+      kickers: vector[final_kicker],
+    }
+  };
+
+  // Check for one pair
+  if (vector::length(&pairs) == 1) {
+    let pair_rank = *vector::borrow(&pairs, 0);
+    let kickers = find_kickers(&ranks, pair_rank, 3);
+    return HandRank {
+      hand_type: HAND_ONE_PAIR,
+      primary_value: pair_rank,
+      secondary_value: 0,
+      kickers,
+    }
+  };
+
+  // High card
+  let kickers = get_high_card_kickers(&ranks);
+  HandRank {
+    hand_type: HAND_HIGH_CARD,
+    primary_value: *vector::borrow(&kickers, 0),
+    secondary_value: 0,
+    kickers,
   }
+}
+
+/// Compare two hands and return true if hand1 wins
+fun compare_hands(hand1: &HandRank, hand2: &HandRank): bool {
+  // Compare hand types first
+  if (hand1.hand_type != hand2.hand_type) {
+    return hand1.hand_type > hand2.hand_type
+  };
+
+  // Same hand type, compare primary values
+  if (hand1.primary_value != hand2.primary_value) {
+    return hand1.primary_value > hand2.primary_value
+  };
+
+  // Same primary value, compare secondary values
+  if (hand1.secondary_value != hand2.secondary_value) {
+    return hand1.secondary_value > hand2.secondary_value
+  };
+
+  // Compare kickers
+  compare_kickers(&hand1.kickers, &hand2.kickers)
+}
 
 // ===== Hand Evaluation Helper Functions =====
 
-  /// Sort ranks in descending order (highest first)
-  fun sort_ranks(ranks: &mut vector<u8>) {
-    let len = vector::length(ranks);
-    let mut i = 0;
-    while (i < len) {
-      let mut j = i + 1;
-      while (j < len) {
-        if (*vector::borrow(ranks, i) < *vector::borrow(ranks, j)) {
-          vector::swap(ranks, i, j);
-        };
-        j = j + 1;
+/// Sort ranks in descending order (highest first)
+fun sort_ranks(ranks: &mut vector<u8>) {
+  let len = vector::length(ranks);
+  let mut i = 0;
+  while (i < len) {
+    let mut j = i + 1;
+    while (j < len) {
+      if (*vector::borrow(ranks, i) < *vector::borrow(ranks, j)) {
+        vector::swap(ranks, i, j);
       };
-      i = i + 1;
+      j = j + 1;
     };
-  }
+    i = i + 1;
+  };
+}
 
-  /// Check for flush and return the suit (255 if no flush)
-  fun check_flush(suits: &vector<u8>): u8 {
-    let mut suit_counts = vector[0u8, 0u8, 0u8, 0u8]; // Hearts, Diamonds, Clubs, Spades
-    
-    let mut i = 0;
-    while (i < vector::length(suits)) {
-      let suit = *vector::borrow(suits, i);
-      let current_count = *vector::borrow(&suit_counts, (suit as u64));
-      *vector::borrow_mut(&mut suit_counts, (suit as u64)) = current_count + 1;
-      i = i + 1;
-    };
-    
-    i = 0;
-    while (i < 4) {
-      if (*vector::borrow(&suit_counts, i) >= 5) {
-        return (i as u8)
-      };
-      i = i + 1;
-    };
-    
-    255 // No flush
-  }
+/// Check for flush and return the suit (255 if no flush)
+fun check_flush(suits: &vector<u8>): u8 {
+  let mut suit_counts = vector[0u8, 0u8, 0u8, 0u8]; // Hearts, Diamonds, Clubs, Spades
 
-  /// Check for straight and return the high card (0 if no straight)
-  fun check_straight(ranks: &vector<u8>): u8 {
-    // Remove duplicates and sort
-    let mut unique_ranks = vector::empty<u8>();
-    let mut i = 0;
-    while (i < vector::length(ranks)) {
-      let rank = *vector::borrow(ranks, i);
-      if (!vector::contains(&unique_ranks, &rank)) {
-        vector::push_back(&mut unique_ranks, rank);
-      };
-      i = i + 1;
-    };
-    
-    sort_ranks(&mut unique_ranks);
-    
-    // Check for 5 consecutive cards
-    let unique_length = vector::length(&unique_ranks);
-    if (unique_length < 5) {
-      return 0  // Not enough unique ranks for a straight
-    };
-    
-    i = 0;
-    while (i <= unique_length - 5) {
-      let mut consecutive = true;
-      let mut j = 0;
-      while (j < 4) {
-        let current_rank = *vector::borrow(&unique_ranks, i + j);
-        let next_rank = *vector::borrow(&unique_ranks, i + j + 1);
-        if (current_rank != next_rank + 1) {
-          consecutive = false;
-          break
-        };
-        j = j + 1;
-      };
-      
-      if (consecutive) {
-        return *vector::borrow(&unique_ranks, i) // Return high card of straight
-      };
-      i = i + 1;
-    };
-    
-    // Check for A-2-3-4-5 straight (wheel)
-    if (vector::length(&unique_ranks) >= 5) {
-      let has_ace = vector::contains(&unique_ranks, &14);
-      let has_five = vector::contains(&unique_ranks, &5);
-      let has_four = vector::contains(&unique_ranks, &4);
-      let has_three = vector::contains(&unique_ranks, &3);
-      let has_two = vector::contains(&unique_ranks, &2);
-      
-      if (has_ace && has_five && has_four && has_three && has_two) {
-        return 5 // 5-high straight
-      };
-    };
-    
-    0 // No straight
-  }
+  let mut i = 0;
+  while (i < vector::length(suits)) {
+    let suit = *vector::borrow(suits, i);
+    let current_count = *vector::borrow(&suit_counts, (suit as u64));
+    *vector::borrow_mut(&mut suit_counts, (suit as u64)) = current_count + 1;
+    i = i + 1;
+  };
 
-  /// Count frequency of each rank
-  fun count_ranks(ranks: &vector<u8>): vector<u8> {
-    let mut counts = vector::empty<u8>();
-    let mut i = 0;
-    while (i < 15) {
-      vector::push_back(&mut counts, 0);
-      i = i + 1;
+  i = 0;
+  while (i < 4) {
+    if (*vector::borrow(&suit_counts, i) >= 5) {
+      return (i as u8)
     };
-    
-    i = 0;
-    while (i < vector::length(ranks)) {
-      let rank = *vector::borrow(ranks, i);
-      let current_count = *vector::borrow(&counts, (rank as u64));
-      *vector::borrow_mut(&mut counts, (rank as u64)) = current_count + 1;
-      i = i + 1;
-    };
-    
-    counts
-  }
+    i = i + 1;
+  };
 
-  /// Find four of a kind rank (0 if none)
-  fun find_four_of_a_kind(rank_counts: &vector<u8>): u8 {
-    let mut i = 14;
-    while (i >= 2) {
-      if (*vector::borrow(rank_counts, i) == 4) {
-        return (i as u8)
-      };
-      i = i - 1;
+  255 // No flush
+}
+
+/// Check for straight and return the high card (0 if no straight)
+fun check_straight(ranks: &vector<u8>): u8 {
+  // Remove duplicates and sort
+  let mut unique_ranks = vector::empty<u8>();
+  let mut i = 0;
+  while (i < vector::length(ranks)) {
+    let rank = *vector::borrow(ranks, i);
+    if (!vector::contains(&unique_ranks, &rank)) {
+      vector::push_back(&mut unique_ranks, rank);
     };
+    i = i + 1;
+  };
+
+  sort_ranks(&mut unique_ranks);
+
+  // Check for 5 consecutive cards
+  let unique_length = vector::length(&unique_ranks);
+  if (unique_length < 5) {
+    return 0 // Not enough unique ranks for a straight
+  };
+
+  i = 0;
+  while (i <= unique_length - 5) {
+    let mut consecutive = true;
+    let mut j = 0;
+    while (j < 4) {
+      let current_rank = *vector::borrow(&unique_ranks, i + j);
+      let next_rank = *vector::borrow(&unique_ranks, i + j + 1);
+      if (current_rank != next_rank + 1) {
+        consecutive = false;
+        break
+      };
+      j = j + 1;
+    };
+
+    if (consecutive) {
+      return *vector::borrow(&unique_ranks, i) // Return high card of straight
+    };
+    i = i + 1;
+  };
+
+  // Check for A-2-3-4-5 straight (wheel)
+  if (vector::length(&unique_ranks) >= 5) {
+    let has_ace = vector::contains(&unique_ranks, &14);
+    let has_five = vector::contains(&unique_ranks, &5);
+    let has_four = vector::contains(&unique_ranks, &4);
+    let has_three = vector::contains(&unique_ranks, &3);
+    let has_two = vector::contains(&unique_ranks, &2);
+
+    if (has_ace && has_five && has_four && has_three && has_two) {
+      return 5 // 5-high straight
+    };
+  };
+
+  0 // No straight
+}
+
+/// Count frequency of each rank
+fun count_ranks(ranks: &vector<u8>): vector<u8> {
+  let mut counts = vector::empty<u8>();
+  let mut i = 0;
+  while (i < 15) {
+    vector::push_back(&mut counts, 0);
+    i = i + 1;
+  };
+
+  i = 0;
+  while (i < vector::length(ranks)) {
+    let rank = *vector::borrow(ranks, i);
+    let current_count = *vector::borrow(&counts, (rank as u64));
+    *vector::borrow_mut(&mut counts, (rank as u64)) = current_count + 1;
+    i = i + 1;
+  };
+
+  counts
+}
+
+/// Find four of a kind rank (0 if none)
+fun find_four_of_a_kind(rank_counts: &vector<u8>): u8 {
+  let mut i = 14;
+  while (i >= 2) {
+    if (*vector::borrow(rank_counts, i) == 4) {
+      return (i as u8)
+    };
+    i = i - 1;
+  };
+  0
+}
+
+/// Find full house (three of a kind, pair)
+fun find_full_house(rank_counts: &vector<u8>): (u8, u8) {
+  let mut three_kind = 0u8;
+  let mut pair_value = 0u8;
+
+  // Find three of a kind (highest)
+  let mut i = 14;
+  while (i >= 2) {
+    if (*vector::borrow(rank_counts, i) == 3) {
+      three_kind = (i as u8);
+      break
+    };
+    i = i - 1;
+  };
+
+  // Find pair (highest, different from three of a kind)
+  i = 14;
+  while (i >= 2) {
+    let count = *vector::borrow(rank_counts, i);
+    if (
+      (count == 2 || (count == 3 && (i as u8) != three_kind)) && (i as u8) != three_kind
+    ) {
+      pair_value = (i as u8);
+      break
+    };
+    i = i - 1;
+  };
+
+  (three_kind, pair_value)
+}
+
+/// Find pairs in descending order
+fun find_pairs(rank_counts: &vector<u8>): vector<u8> {
+  let mut pairs = vector::empty<u8>();
+
+  let mut i = 14;
+  while (i >= 2) {
+    let count = *vector::borrow(rank_counts, i);
+    if (count == 2) {
+      vector::push_back(&mut pairs, (i as u8));
+    } else if (count == 3) {
+      // Three of a kind counts as a pair for full house detection
+      vector::push_back(&mut pairs, (i as u8));
+    };
+    i = i - 1;
+  };
+
+  pairs
+}
+
+/// Find the highest kicker excluding specified rank
+fun find_highest_kicker(ranks: &vector<u8>, exclude_rank: u8, count: u8): u8 {
+  let kickers = find_kickers(ranks, exclude_rank, count);
+  if (vector::length(&kickers) > 0) {
+    *vector::borrow(&kickers, 0)
+  } else {
     0
   }
+}
 
-  /// Find full house (three of a kind, pair)
-  fun find_full_house(rank_counts: &vector<u8>): (u8, u8) {
-    let mut three_kind = 0u8;
-    let mut pair_value = 0u8;
-    
-    // Find three of a kind (highest)
-    let mut i = 14;
-    while (i >= 2) {
-      if (*vector::borrow(rank_counts, i) == 3) {
-        three_kind = (i as u8);
-        break
-      };
-      i = i - 1;
-    };
-    
-    // Find pair (highest, different from three of a kind)
-    i = 14;
-    while (i >= 2) {
-      let count = *vector::borrow(rank_counts, i);
-      if ((count == 2 || (count == 3 && (i as u8) != three_kind)) && (i as u8) != three_kind) {
-        pair_value = (i as u8);
-        break
-      };
-      i = i - 1;
-    };
-    
-    (three_kind, pair_value)
-  }
+/// Find kickers (cards not part of the main hand)
+fun find_kickers(ranks: &vector<u8>, exclude_rank: u8, count: u8): vector<u8> {
+  let mut kickers = vector::empty<u8>();
 
-  /// Find pairs in descending order
-  fun find_pairs(rank_counts: &vector<u8>): vector<u8> {
-    let mut pairs = vector::empty<u8>();
-    
-    let mut i = 14;
-    while (i >= 2) {
-      let count = *vector::borrow(rank_counts, i);
-      if (count == 2) {
-        vector::push_back(&mut pairs, (i as u8));
-      } else if (count == 3) {
-        // Three of a kind counts as a pair for full house detection
-        vector::push_back(&mut pairs, (i as u8));
-      };
-      i = i - 1;
+  // Collect unused ranks in descending order
+  let mut i = 0;
+  let target_count = (count as u64);
+  while (i < vector::length(ranks) && vector::length(&kickers) < target_count) {
+    let rank = *vector::borrow(ranks, i);
+    if (rank != exclude_rank) {
+      vector::push_back(&mut kickers, rank);
     };
-    
-    pairs
-  }
+    i = i + 1;
+  };
 
-  /// Find the highest kicker excluding specified rank
-  fun find_highest_kicker(ranks: &vector<u8>, exclude_rank: u8, count: u8): u8 {
-    let kickers = find_kickers(ranks, exclude_rank, count);
-    if (vector::length(&kickers) > 0) {
-      *vector::borrow(&kickers, 0)
-    } else {
-      0
-    }
-  }
+  kickers
+}
 
-  /// Find kickers (cards not part of the main hand)
-  fun find_kickers(ranks: &vector<u8>, exclude_rank: u8, count: u8): vector<u8> {
-    let mut kickers = vector::empty<u8>();
-    
-    // Collect unused ranks in descending order
-    let mut i = 0;
-    let target_count = (count as u64);
-    while (i < vector::length(ranks) && vector::length(&kickers) < target_count) {
-      let rank = *vector::borrow(ranks, i);
-      if (rank != exclude_rank) {
-        vector::push_back(&mut kickers, rank);
-      };
-      i = i + 1;
-    };
-    
-    kickers
-  }
+/// Get flush kickers (5 highest cards of flush suit)
+fun get_flush_kickers(
+  ranks: &vector<u8>,
+  suits: &vector<u8>,
+  flush_suit: u8,
+): vector<u8> {
+  let mut flush_cards = vector::empty<u8>();
 
-  /// Get flush kickers (5 highest cards of flush suit)
-  fun get_flush_kickers(ranks: &vector<u8>, suits: &vector<u8>, flush_suit: u8): vector<u8> {
-    let mut flush_cards = vector::empty<u8>();
-    
-    let mut i = 0;
-    while (i < vector::length(suits)) {
-      if (*vector::borrow(suits, i) == flush_suit) {
-        vector::push_back(&mut flush_cards, *vector::borrow(ranks, i));
-      };
-      i = i + 1;
+  let mut i = 0;
+  while (i < vector::length(suits)) {
+    if (*vector::borrow(suits, i) == flush_suit) {
+      vector::push_back(&mut flush_cards, *vector::borrow(ranks, i));
     };
-    
-    sort_ranks(&mut flush_cards);
-    
-    // Take top 5 cards
-    let mut kickers = vector::empty<u8>();
-    i = 0;
-    while (i < 5 && i < vector::length(&flush_cards)) {
-      vector::push_back(&mut kickers, *vector::borrow(&flush_cards, i));
-      i = i + 1;
-    };
-    
-    kickers
-  }
+    i = i + 1;
+  };
 
-  /// Get high card kickers (5 highest cards)
-  fun get_high_card_kickers(ranks: &vector<u8>): vector<u8> {
-    let mut unique_ranks = vector::empty<u8>();
-    
-    // Get unique ranks
-    let mut i = 0;
-    while (i < vector::length(ranks)) {
-      let rank = *vector::borrow(ranks, i);
-      if (!vector::contains(&unique_ranks, &rank)) {
-        vector::push_back(&mut unique_ranks, rank);
-      };
-      i = i + 1;
-    };
-    
-    sort_ranks(&mut unique_ranks);
-    
-    // Take top 5
-    let mut kickers = vector::empty<u8>();
-    i = 0;
-    while (i < 5 && i < vector::length(&unique_ranks)) {
-      vector::push_back(&mut kickers, *vector::borrow(&unique_ranks, i));
-      i = i + 1;
-    };
-    
-    kickers
-  }
+  sort_ranks(&mut flush_cards);
 
-  /// Compare kickers arrays
-  fun compare_kickers(kickers1: &vector<u8>, kickers2: &vector<u8>): bool {
-    let len = vector::length(kickers1);
-    let mut i = 0;
-    while (i < len && i < vector::length(kickers2)) {
-      let k1 = *vector::borrow(kickers1, i);
-      let k2 = *vector::borrow(kickers2, i);
-      if (k1 != k2) {
-        return k1 > k2
-      };
-      i = i + 1;
+  // Take top 5 cards
+  let mut kickers = vector::empty<u8>();
+  i = 0;
+  while (i < 5 && i < vector::length(&flush_cards)) {
+    vector::push_back(&mut kickers, *vector::borrow(&flush_cards, i));
+    i = i + 1;
+  };
+
+  kickers
+}
+
+/// Get high card kickers (5 highest cards)
+fun get_high_card_kickers(ranks: &vector<u8>): vector<u8> {
+  let mut unique_ranks = vector::empty<u8>();
+
+  // Get unique ranks
+  let mut i = 0;
+  while (i < vector::length(ranks)) {
+    let rank = *vector::borrow(ranks, i);
+    if (!vector::contains(&unique_ranks, &rank)) {
+      vector::push_back(&mut unique_ranks, rank);
     };
-    false // Tie
-  }
+    i = i + 1;
+  };
+
+  sort_ranks(&mut unique_ranks);
+
+  // Take top 5
+  let mut kickers = vector::empty<u8>();
+  i = 0;
+  while (i < 5 && i < vector::length(&unique_ranks)) {
+    vector::push_back(&mut kickers, *vector::borrow(&unique_ranks, i));
+    i = i + 1;
+  };
+
+  kickers
+}
+
+/// Compare kickers arrays
+fun compare_kickers(kickers1: &vector<u8>, kickers2: &vector<u8>): bool {
+  let len = vector::length(kickers1);
+  let mut i = 0;
+  while (i < len && i < vector::length(kickers2)) {
+    let k1 = *vector::borrow(kickers1, i);
+    let k2 = *vector::borrow(kickers2, i);
+    if (k1 != k2) {
+      return k1 > k2
+    };
+    i = i + 1;
+  };
+  false // Tie
+}
