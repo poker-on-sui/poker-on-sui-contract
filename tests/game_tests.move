@@ -16,8 +16,8 @@ const PLAYER4: address = @0x4444;
 const SEED_LENGTH: u64 = 32;
 
 // Game configuration constants
-const BUY_IN: u64 = 1000000000; // 1 SUI
-const MIN_BET: u64 = 50000000; // 5% of buy_in
+const BUY_IN: u64 = 1_000_000_000; // 1 SUI
+const MIN_BET: u64 = 50_000_000; // 5% of buy_in
 
 // Error codes from the poker module (only keeping used ones for warnings)
 const EInsufficientBuyIn: u64 = 2;
@@ -31,7 +31,7 @@ fun setup_game(): Scenario {
 
   // Create the poker game with creator automatically joining
   let coin = mint_sui(BUY_IN, scenario.ctx());
-  game::create_game(BUY_IN, coin, scenario.ctx());
+  game::create_game(coin, scenario.ctx());
 
   scenario
 }
@@ -60,11 +60,7 @@ fun test_create_game() {
   {
     // Create a game with creator automatically joining
     let coin = mint_sui(BUY_IN, scenario.ctx());
-    game::create_game(
-      BUY_IN,
-      coin,
-      scenario.ctx(),
-    );
+    game::create_game(coin, scenario.ctx());
   };
   // Check that the game was created
   ts::next_tx(&mut scenario, PLAYER0);
@@ -1047,7 +1043,7 @@ fun test_hand_evaluation_integration() {
 
   // The game should now be completed with hand evaluation having determined the winner
   // This test ensures the hand evaluation system integrates properly without errors
-  
+
   ts::end(scenario);
 }
 
@@ -1159,7 +1155,7 @@ fun test_side_pot_multiple_all_ins() {
 
   // Create scenario with different all-in amounts
   // Pre-flop: PLAYER0 (dealer), PLAYER1 (SB), PLAYER2 (BB), PLAYER3 first to act
-  
+
   // PLAYER3 raises significantly
   scenario.next_tx(PLAYER3);
   {
@@ -1194,7 +1190,7 @@ fun test_side_pot_multiple_all_ins() {
 
   // Now in post-flop, create different all-in amounts to test side pots
   // Test scenario: Have players bet/call different amounts to go all-in
-  
+
   // PLAYER1 (first to act post-flop) bets a smaller amount
   scenario.next_tx(PLAYER1);
   {
@@ -1217,7 +1213,7 @@ fun test_side_pot_multiple_all_ins() {
     ts::return_shared(game);
   };
 
-  // PLAYER3 goes all-in 
+  // PLAYER3 goes all-in
   scenario.next_tx(PLAYER3);
   {
     let mut game = scenario.take_shared<PokerGame>();
@@ -1252,10 +1248,10 @@ fun test_side_pot_multiple_all_ins() {
   // - Main pot: Available to all players (up to PLAYER1's all-in amount)
   // - Side pot 1: Available to PLAYER2, PLAYER3, PLAYER0 (up to PLAYER3's amount)
   // - Side pot 2: Available to PLAYER2 and PLAYER0 (remaining amount)
-  
+
   // The game will automatically proceed through remaining betting rounds and showdown
   // Testing that the side pot logic handles complex multi-player scenarios correctly
-  
+
   ts::end(scenario);
 }
 
@@ -1312,7 +1308,7 @@ fun test_dealer_rotation_multiple_hands() {
   {
     let mut game = scenario.take_shared<PokerGame>();
     game.start_new_hand(scenario.ctx());
-    
+
     // Verify dealer has rotated by checking blind positions
     // In second hand: PLAYER1 is dealer, PLAYER2 is small blind, PLAYER0 is big blind
     // We can verify this by checking who needs to post blinds and act first
@@ -1351,7 +1347,7 @@ fun test_dealer_rotation_multiple_hands() {
   {
     let mut game = scenario.take_shared<PokerGame>();
     game.start_new_hand(scenario.ctx());
-    
+
     // Verify dealer rotation: PLAYER2 is dealer, PLAYER0 is small blind, PLAYER1 is big blind
     // This completes the test of dealer rotation through multiple hands
     ts::return_shared(game);
@@ -1366,7 +1362,7 @@ fun test_dealer_rotation_multiple_hands() {
 fun test_get_flush_kickers_coverage() {
   // This test specifically covers the get_flush_kickers function
   // by creating scenarios with different flush combinations
-  
+
   let mut scenario = setup_game();
 
   // Add 2 players to create a simple game
@@ -1493,7 +1489,7 @@ fun test_get_flush_kickers_coverage() {
 fun test_compare_kickers_coverage() {
   // This test covers the compare_kickers function by creating scenarios
   // where kicker comparison is needed for tie-breaking
-  
+
   let mut scenario = setup_game();
 
   // Add 3 players to increase chances of kicker comparisons
@@ -1562,7 +1558,7 @@ fun test_compare_kickers_coverage() {
 
   // Continue through all streets to reach showdown with multiple players
   // This maximizes the chance that compare_kickers will be called during hand comparison
-  
+
   // Flop
   scenario.next_tx(PLAYER1);
   {
@@ -1657,7 +1653,7 @@ fun test_compare_kickers_coverage() {
 fun test_distribute_pot_single_winner_coverage() {
   // This test specifically covers the if section in line 979 of distribute_pot
   // where there's only one active player (active_count == 1)
-  
+
   let mut scenario = setup_game();
 
   // Add 2 players
@@ -1688,7 +1684,7 @@ fun test_distribute_pot_single_winner_coverage() {
 
   // Create scenario where all but one player folds
   // This will trigger the single winner path (active_count == 1)
-  
+
   // PLAYER0 (first to act) folds
   scenario.next_tx(PLAYER0);
   {
@@ -1708,7 +1704,7 @@ fun test_distribute_pot_single_winner_coverage() {
   // PLAYER2 (big blind) is now the only active player
   // The game should automatically end and distribute the pot to PLAYER2
   // This triggers the if (active_count == 1) branch in distribute_pot (line 979)
-  
+
   // Verify the game ended with single winner
   scenario.next_tx(PLAYER2);
   {
@@ -1724,7 +1720,7 @@ fun test_distribute_pot_single_winner_coverage() {
 fun test_distribute_pot_side_pot_existing_winner_coverage() {
   // This test covers the if section in line 1026 of distribute_pot
   // where a winner is already in the winners list and we add to their amount
-  
+
   let mut scenario = setup_game();
 
   // Add 3 players to create multiple side pots scenario
@@ -1764,7 +1760,7 @@ fun test_distribute_pot_side_pot_existing_winner_coverage() {
   // Create a scenario with multiple all-ins to generate side pots
   // This increases the chance that the same player wins multiple side pots
   // triggering the "found" branch in line 1026
-  
+
   // Pre-flop betting to create different stack sizes
   scenario.next_tx(PLAYER3);
   {
@@ -1807,7 +1803,7 @@ fun test_distribute_pot_side_pot_existing_winner_coverage() {
   scenario.next_tx(PLAYER2);
   {
     let mut game = scenario.take_shared<PokerGame>();
-    // Medium all-in to create second side pot  
+    // Medium all-in to create second side pot
     let medium_bet = MIN_BET * 3;
     game.raise(medium_bet, scenario.ctx());
     ts::return_shared(game);
@@ -1834,14 +1830,14 @@ fun test_distribute_pot_side_pot_existing_winner_coverage() {
   // During distribution, if the same player wins multiple side pots,
   // it will trigger the code path where found=true and we add to existing amount
   // This covers the if (*vector::borrow(&winners, winners_idx) == winner_addr) branch
-  
+
   ts::end(scenario);
 }
 
-#[test] 
+#[test]
 fun test_distribute_pot_zero_amount_side_pot_coverage() {
   // This test covers the continue path when pot_amount == 0 in distribute_pot
-  
+
   let mut scenario = setup_game();
 
   // Add players
@@ -1872,7 +1868,7 @@ fun test_distribute_pot_zero_amount_side_pot_coverage() {
 
   // Create a scenario where side pots might have zero amounts
   // This can happen with very specific betting patterns
-  
+
   // Pre-flop: PLAYER0 calls, PLAYER1 calls, PLAYER2 checks
   scenario.next_tx(PLAYER0); // First to act (dealer)
   {
@@ -1968,7 +1964,7 @@ fun test_distribute_pot_zero_amount_side_pot_coverage() {
 #[test]
 fun test_distribute_pot_empty_eligible_players_coverage() {
   // This test covers the continue path when eligible_players is empty in distribute_pot
-  
+
   let mut scenario = setup_game();
 
   // Add players
@@ -1999,7 +1995,7 @@ fun test_distribute_pot_empty_eligible_players_coverage() {
 
   // Create all-in scenario and then have some players fold
   // This could potentially create side pots with empty eligible player lists
-  
+
   scenario.next_tx(PLAYER0);
   {
     let mut game = scenario.take_shared<PokerGame>();
@@ -2025,6 +2021,6 @@ fun test_distribute_pot_empty_eligible_players_coverage() {
   };
 
   // Game should proceed to showdown and handle any empty eligible player lists
-  
+
   ts::end(scenario);
 }
