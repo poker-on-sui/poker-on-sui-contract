@@ -1,7 +1,7 @@
 #[test_only]
 module poker::game_tests;
 
-use poker::game::{Self, PokerGame};
+use poker::game;
 use poker::tests_utils::{Self, create_and_join_game_as};
 use sui::coin::mint_for_testing;
 use sui::sui::SUI;
@@ -50,27 +50,23 @@ use fun tests_utils::start_as as ts::Scenario.start_as;
 use fun tests_utils::call_as as ts::Scenario.call_as;
 use fun tests_utils::fold_as as ts::Scenario.fold_as;
 use fun tests_utils::check_as as ts::Scenario.check_as;
-use fun tests_utils::bet_or_raise_as as ts::Scenario.bet_or_raise_as;
-use fun tests_utils::check_game_state_as as ts::Scenario.check_game_state_as;
+use fun tests_utils::raise_as as ts::Scenario.raise_as;
 use fun tests_utils::withdraw_as as ts::Scenario.withdraw_as;
 use fun tests_utils::start_new_hand_as as ts::Scenario.start_new_hand_as;
-
+use fun tests_utils::act_as as ts::Scenario.act_as;
+use fun tests_utils::inspect_as as ts::Scenario.inspect_as;
 // ===== Game tests =====
 
 #[test]
 #[expected_failure(abort_code = EInsufficientBuyIn, location = game)]
-// EInsufficientBuyIn from poker module
 fun test_join_game_insufficient_buy_in() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Player tries to join with insufficient funds
-  scenario.next_tx(PLAYER1);
-  {
-    let mut game = scenario.take_shared<PokerGame>();
-    let coin = mint_for_testing<SUI>(BUY_IN - 1, scenario.ctx()); // Less than required
+  scenario.act_as!(PLAYER1, |game| {
+    let coin = mint_for_testing<SUI>(BUY_IN - 1, scenario.ctx()); // Less than required buy-in
     game.join(coin, scenario.ctx());
-    ts::return_shared(game);
-  };
+  });
 
   ts::end(scenario);
 }
@@ -97,12 +93,8 @@ fun test_start_game() {
   g.join_as(PLAYER1);
   g.join_as(PLAYER2);
 
-  g.next_tx(PLAYER0);
-  {
-    let game = g.take_shared<PokerGame>();
-    assert_eq(game.pot_balance(), BUY_IN * 3); // Total pot should be 3x buy-in
-    ts::return_shared(game);
-  };
+  // Total pot should be 3x buy-in
+  g.inspect_as!(PLAYER0, |game| assert_eq(game.pot_balance(), BUY_IN * 3));
 
   // PLAYER0 starts the game
   g.start_as(PLAYER0);
@@ -136,13 +128,9 @@ fun test_start_game_invalid_seed() {
   scenario.join_as(PLAYER2);
 
   // PLAYER0 tries to start game with empty seed
-  scenario.next_tx(PLAYER0);
-  {
-    let mut game = scenario.take_shared<PokerGame>();
-    let empty_seed = std::vector::empty<u8>(); // Empty seed
-    game.start_game_with_seed_for_testing(empty_seed, scenario.ctx()); // Should fail
-    ts::return_shared(game);
-  };
+  scenario.act_as!(PLAYER0, |game| {
+    game.start_game_with_seed_for_testing(vector[], scenario.ctx());
+  });
 
   ts::end(scenario);
 }
@@ -153,11 +141,8 @@ fun test_player_actions() {
 
   // Add 4 players
   scenario.join_as(PLAYER1);
-
   scenario.join_as(PLAYER2);
-
   scenario.join_as(PLAYER3);
-
   scenario.join_as(PLAYER4);
 
   // Start the game
@@ -165,18 +150,10 @@ fun test_player_actions() {
 
   // Test player actions - first player after big blind calls
   scenario.call_as(PLAYER3); // Player after big blind (position 3)
-
-  // Next player raises
-  scenario.bet_or_raise_as(PLAYER4, MIN_BET * 3); // Player 4 raises to triple the minimum bet
-
-  // Dealer folds
-  scenario.fold_as(PLAYER0);
-
-  // Small blind player folds
-  scenario.fold_as(PLAYER1);
-
-  // Big blind player calls
-  scenario.call_as(PLAYER2);
+  scenario.raise_as(PLAYER4, MIN_BET * 3); // Player 4 raises to triple the minimum bet
+  scenario.fold_as(PLAYER0); // Dealer folds
+  scenario.fold_as(PLAYER1); // Small blind folds
+  scenario.call_as(PLAYER2); // Big blind calls
 
   ts::end(scenario);
 }
@@ -194,35 +171,29 @@ fun test_full_game_flow() {
 
   // Pre-flop actions
   scenario.call_as(PLAYER0); // First to act in 3-player (dealer after big blind), call
-
-  scenario.call_as(PLAYER1); // Small blind
-
-  // Big blind gets option to check since everyone called
-  scenario.check_as(PLAYER2); // Big blind
+  scenario.call_as(PLAYER1); // Small blind calls
+  scenario.check_as(PLAYER2); // Big blind gets option to check since everyone called
 
   // Flop actions
   scenario.check_as(PLAYER1); // First player after flop (small blind)
-
   scenario.check_as(PLAYER2); // Big blind
-
   scenario.check_as(PLAYER0); // Dealer
 
   // Turn actions
-  scenario.bet_or_raise_as(PLAYER1, MIN_BET); // First to act (small blind)
-
+  scenario.raise_as(PLAYER1, MIN_BET); // First to act (small blind)
   scenario.call_as(PLAYER2); // Big blind
-
   scenario.call_as(PLAYER0); // Dealer
 
   // River actions
   scenario.check_as(PLAYER1); // First to act (small blind)
-
   scenario.check_as(PLAYER2); // Big blind
-
   scenario.check_as(PLAYER0); // Dealer
 
-  // Game should be over now
-  assert_eq(scenario.check_game_state_as(PLAYER0), STATE_GAME_OVER);
+  scenario.inspect_as!(PLAYER0, |game| {
+    // Check game state after all actions
+    assert_eq(game.state(), STATE_GAME_OVER);
+    assert_eq(game.pot_balance(), BUY_IN * 3); // Total pot should be 3x buy-in
+  });
 
   ts::end(scenario);
 }
@@ -233,22 +204,18 @@ fun test_all_in_scenario() {
 
   // Add 2 players
   scenario.join_as(PLAYER1);
-
   scenario.join_as(PLAYER2);
 
   // Start the game
   scenario.start_as(PLAYER0);
 
   // PLAYER0 goes all-in pre-flop (first to act in 3-player)
-  scenario.bet_or_raise_as(PLAYER0, BUY_IN);
-
-  // Player1 calls
+  scenario.raise_as(PLAYER0, BUY_IN);
   scenario.call_as(PLAYER1);
-
-  // Player2 calls
   scenario.call_as(PLAYER2);
 
   // This should automatically advance to showdown
+  // TODO: check that the game state is correct after all-in
 
   ts::end(scenario);
 }
@@ -281,7 +248,7 @@ fun test_four_player_game_flow() {
   scenario.check_as(PLAYER0); // Dealer (position 0)
 
   // Turn actions
-  scenario.bet_or_raise_as(PLAYER1, MIN_BET); // First to act on turn (position 1)
+  scenario.raise_as(PLAYER1, MIN_BET); // First to act on turn (position 1)
   scenario.call_as(PLAYER2); // Position 2
   scenario.call_as(PLAYER3); // Position 3
   scenario.call_as(PLAYER4); // Position 4
@@ -295,6 +262,7 @@ fun test_four_player_game_flow() {
   scenario.check_as(PLAYER0); // Dealer
 
   // Game should be over now with PLAYER1, PLAYER3, and PLAYER4 remaining
+  // TODO: Verify game state and pot balance
 
   ts::end(scenario);
 }
@@ -313,21 +281,14 @@ fun test_four_player_all_in_scenario() {
   scenario.start_as(PLAYER0);
 
   // PLAYER3 goes all-in pre-flop (first to act in 5-player game)
-  scenario.bet_or_raise_as(PLAYER3, BUY_IN);
-
-  // PLAYER4 calls
+  scenario.raise_as(PLAYER3, BUY_IN);
   scenario.call_as(PLAYER4);
-
-  // PLAYER0 (dealer) calls
   scenario.call_as(PLAYER0);
-
-  // PLAYER1 (small blind) calls
   scenario.call_as(PLAYER1);
-
-  // PLAYER2 (big blind) calls
   scenario.call_as(PLAYER2);
 
   // This should automatically advance to showdown with all players all-in
+  // TODO: check that the game state is correct after all-in
 
   ts::end(scenario);
 }
@@ -367,6 +328,7 @@ fun test_hand_evaluation_integration() {
 
   // The game should now be completed with hand evaluation having determined the winner
   // This test ensures the hand evaluation system integrates properly without errors
+  // TODO: Verify the winner and hand rankings if needed
 
   ts::end(scenario);
 }
@@ -383,7 +345,7 @@ fun test_side_pot_all_in_scenario() {
   scenario.start_as(PLAYER0);
 
   // PLAYER0 goes all-in pre-flop (first to act in 3-player)
-  scenario.bet_or_raise_as(PLAYER0, BUY_IN); // Raise to all-in
+  scenario.raise_as(PLAYER0, BUY_IN); // Raise to all-in
   scenario.call_as(PLAYER1); // Player1 calls
   scenario.call_as(PLAYER2); // Player2 calls
 
@@ -409,16 +371,10 @@ fun test_side_pot_multiple_all_ins() {
   // Pre-flop: PLAYER0 (dealer), PLAYER1 (SB), PLAYER2 (BB), PLAYER3 first to act
 
   // PLAYER3 raises significantly
-  scenario.bet_or_raise_as(PLAYER3, MIN_BET * 4); // Raise to 4x min bet
-
-  // PLAYER0 calls
+  scenario.raise_as(PLAYER3, MIN_BET * 4); // Raise to 4x min bet
   scenario.call_as(PLAYER0);
-
-  // PLAYER1 calls
   scenario.call_as(PLAYER1);
-
-  // PLAYER2 calls to complete pre-flop
-  scenario.call_as(PLAYER2);
+  scenario.call_as(PLAYER2); // PLAYER2 calls to complete pre-flop
 
   // Now in post-flop, create different all-in amounts to test side pots
   // Test scenario: Have players bet/call different amounts to go all-in
@@ -428,7 +384,7 @@ fun test_side_pot_multiple_all_ins() {
     // Bet half of remaining balance to leave room for raises
     let remaining_balance = BUY_IN - MIN_BET * 4;
     let bet_amount = remaining_balance / 2;
-    scenario.bet_or_raise_as(PLAYER1, bet_amount);
+    scenario.raise_as(PLAYER1, bet_amount);
   };
 
   // PLAYER2 raises to a larger amount
@@ -436,14 +392,14 @@ fun test_side_pot_multiple_all_ins() {
     // Raise to 3/4 of remaining balance
     let remaining_balance = BUY_IN - MIN_BET * 4;
     let raise_amount = (remaining_balance * 3) / 4;
-    scenario.bet_or_raise_as(PLAYER2, raise_amount);
+    scenario.raise_as(PLAYER2, raise_amount);
   };
 
   // PLAYER3 goes all-in
   {
     // Go all-in with all remaining balance
     let remaining_balance = BUY_IN - MIN_BET * 4;
-    scenario.bet_or_raise_as(PLAYER3, remaining_balance);
+    scenario.raise_as(PLAYER3, remaining_balance);
   };
 
   // PLAYER0 calls to see the action through to showdown
@@ -452,14 +408,12 @@ fun test_side_pot_multiple_all_ins() {
   // Verify the game handled multiple all-ins correctly by checking game state
   // The game should automatically proceed through remaining streets and showdown
   // Multiple side pots should be created based on different all-in amounts
-  scenario.next_tx(PLAYER0);
-  {
-    let game = scenario.take_shared<PokerGame>();
+  scenario.inspect_as!(PLAYER0, |game| {
+    // assert_eq(game.state(), STATE_GAME_OVER);
     // TODO: Verify game progressed to showdown or completed
     // In a real implementation, we'd check specific side pot amounts
     // but for this test, we verify the game handles complex all-in scenarios
-    ts::return_shared(game);
-  };
+  });
 
   // At this point, the game should have created multiple side pots:
   // - Main pot: Available to all players (up to PLAYER1's all-in amount)
@@ -491,24 +445,19 @@ fun test_dealer_rotation_multiple_hands() {
   // Game should now be in STATE_GAME_OVER
 
   // Start new hand with rotated dealer - should be PLAYER1 (position 1)
-  scenario.next_tx(PLAYER0);
-  {
-    let mut game = scenario.take_shared<PokerGame>();
+  scenario.act_as!(PLAYER0, |game| {
     game.start_new_hand(scenario.ctx());
 
     // Verify dealer has rotated by checking blind positions
     // In second hand: PLAYER1 is dealer, PLAYER2 is small blind, PLAYER0 is big blind
     // We can verify this by checking who needs to post blinds and act first
     assert_eq(game.dealer_position(), 1);
-
-    ts::return_shared(game);
-  };
+  });
 
   // Fast forward second hand to test third hand rotation
   // In second hand: PLAYER1 is dealer, PLAYER2 is SB, PLAYER0 is BB
   // First to act pre-flop is PLAYER1 (dealer acts first in 3-player when big blind is posted)
   scenario.fold_as(PLAYER1);
-
   scenario.fold_as(PLAYER2);
 
   // Start third hand - dealer should now be PLAYER2 (position 2)
@@ -594,18 +543,14 @@ fun test_withdraw_no_winnings() {
   scenario.start_as(PLAYER0);
 
   // Complete game - PLAYER0 wins, others lose
-  scenario.bet_or_raise_as(PLAYER0, BUY_IN); // PLAYER0 goes all-in
+  scenario.raise_as(PLAYER0, BUY_IN); // PLAYER0 goes all-in
   scenario.call_as(PLAYER1);
   scenario.fold_as(PLAYER2);
 
   // Since all players is now all-in, game should ended with PLAYER0 OR PLAYER01 winning
-  scenario.next_tx(PLAYER0);
-  {
-    let game = scenario.take_shared<PokerGame>();
-    // Verify game is in STATE_GAME_OVER
+  scenario.inspect_as!(PLAYER0, |game| {
     assert_eq(game.state(), STATE_GAME_OVER);
-    ts::return_shared(game);
-  };
+  });
 
   // Try to withdraw with losing player (should fail)
   scenario.withdraw_as(PLAYER1); // Player who folded and has no winnings

@@ -1,6 +1,6 @@
 module poker::game;
 
-use sui::balance::{Self, Balance};
+use sui::balance::Balance;
 use sui::coin::Coin;
 use sui::event::emit;
 use sui::random::{Random, new_generator};
