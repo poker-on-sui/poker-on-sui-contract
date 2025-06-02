@@ -3,6 +3,7 @@ module poker::game_tests;
 
 use poker::game;
 use poker::tests_utils::{Self, create_and_join_game_as};
+use std::debug;
 use sui::coin::mint_for_testing;
 use sui::sui::SUI;
 use sui::test_scenario as ts;
@@ -52,9 +53,9 @@ use fun tests_utils::fold_as as ts::Scenario.fold_as;
 use fun tests_utils::check_as as ts::Scenario.check_as;
 use fun tests_utils::raise_as as ts::Scenario.raise_as;
 use fun tests_utils::withdraw_as as ts::Scenario.withdraw_as;
-use fun tests_utils::start_new_hand_as as ts::Scenario.start_new_hand_as;
 use fun tests_utils::act_as as ts::Scenario.act_as;
 use fun tests_utils::inspect_as as ts::Scenario.inspect_as;
+
 // ===== Game tests =====
 
 #[test]
@@ -94,7 +95,7 @@ fun test_start_game() {
   g.join_as(PLAYER2);
 
   // Total pot should be 3x buy-in
-  g.inspect_as!(PLAYER0, |game| assert_eq(game.pot_balance(), BUY_IN * 3));
+  g.inspect_as!(PLAYER0, |game| assert_eq(game.treasury_balance(), BUY_IN * 3));
 
   // PLAYER0 starts the game
   g.start_as(PLAYER0);
@@ -192,7 +193,17 @@ fun test_full_game_flow() {
   scenario.inspect_as!(PLAYER0, |game| {
     // Check game state after all actions
     assert_eq(game.state(), STATE_GAME_OVER);
-    assert_eq(game.pot_balance(), BUY_IN * 3); // Total pot should be 3x buy-in
+    assert_eq(game.treasury_balance(), BUY_IN * 3); // Total pot should be 3x buy-in
+    debug::print(game);
+    let player0_balance = game.get_player_balance(PLAYER0);
+    let player1_balance = game.get_player_balance(PLAYER1);
+    let player2_balance = game.get_player_balance(PLAYER2);
+    let total_balance = player0_balance + player1_balance + player2_balance;
+    assert_eq(total_balance, game.treasury_balance()); // Total balance should match treasury
+    assert!(
+      player0_balance >= BUY_IN || player1_balance >= BUY_IN || player2_balance >= BUY_IN,
+    ); // At least one player should have winnings
+    assert_eq(game.side_pots_count(), 0); // No side pots in this simple game
   });
 
   ts::end(scenario);
@@ -408,12 +419,7 @@ fun test_side_pot_multiple_all_ins() {
   // Verify the game handled multiple all-ins correctly by checking game state
   // The game should automatically proceed through remaining streets and showdown
   // Multiple side pots should be created based on different all-in amounts
-  scenario.inspect_as!(PLAYER0, |game| {
-    // assert_eq(game.state(), STATE_GAME_OVER);
-    // TODO: Verify game progressed to showdown or completed
-    // In a real implementation, we'd check specific side pot amounts
-    // but for this test, we verify the game handles complex all-in scenarios
-  });
+  scenario.inspect_as!(PLAYER0, |_game| {});
 
   // At this point, the game should have created multiple side pots:
   // - Main pot: Available to all players (up to PLAYER1's all-in amount)
@@ -445,12 +451,12 @@ fun test_dealer_rotation_multiple_hands() {
   // Game should now be in STATE_GAME_OVER
 
   // Start new hand with rotated dealer - should be PLAYER1 (position 1)
-  scenario.act_as!(PLAYER0, |game| {
-    game.start_new_hand(scenario.ctx());
+  scenario.start_as(PLAYER0);
 
-    // Verify dealer has rotated by checking blind positions
-    // In second hand: PLAYER1 is dealer, PLAYER2 is small blind, PLAYER0 is big blind
-    // We can verify this by checking who needs to post blinds and act first
+  // Verify dealer has rotated by checking blind positions
+  // In second hand: PLAYER1 is dealer, PLAYER2 is small blind, PLAYER0 is big blind
+  // We can verify this by checking who needs to post blinds and act first
+  scenario.inspect_as!(PLAYER0, |game| {
     assert_eq(game.dealer_position(), 1);
   });
 
@@ -461,7 +467,7 @@ fun test_dealer_rotation_multiple_hands() {
   scenario.fold_as(PLAYER2);
 
   // Start third hand - dealer should now be PLAYER2 (position 2)
-  scenario.start_new_hand_as(PLAYER0);
+  scenario.start_as(PLAYER0);
 
   ts::end(scenario);
 }

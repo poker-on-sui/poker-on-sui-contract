@@ -19,20 +19,23 @@ const MIN_BUY_IN: u64 = 100_000_000; // 0.1 SUI
 const EGameInProgress: u64 = 0x0000;
 const EInvalidPlayerCount: u64 = 0x0001;
 const EInsufficientBuyIn: u64 = 0x0002;
+const EBuyInMismatch: u64 = 0x0003;
 const EInvalidPlayer: u64 = 0x0004;
 const EInvalidAction: u64 = 0x0005;
 const EInvalidAmount: u64 = 0x0006;
-const ENotYourTurn: u64 = 0x0007;
 const EAlreadyJoined: u64 = 0x0009;
 const EInvalidSeed: u64 = 0x000A;
 const EInvalidGameState: u64 = 0x000B;
 const EInvalidHandSize: u64 = 0x000C;
+const EGameFulled: u64 = 0x000D;
 
 // Player actions
-const ACTION_FOLD: u8 = 0;
-const ACTION_CHECK: u8 = 1;
-const ACTION_CALL: u8 = 2;
-const ACTION_BET_OR_RAISE: u8 = 3;
+public enum PlayerAction has copy, drop {
+  Fold,
+  Check,
+  Call,
+  BetOrRaise { amount: u64 },
+}
 
 // Game states
 const STATE_WAITING_FOR_PLAYERS: u8 = 0;
@@ -81,35 +84,59 @@ public struct SidePot has drop, store {
 }
 
 // Player information
-public struct Player has drop, store {
+public struct Player has copy, drop, store {
+  /// Player's wallet address
   addr: address,
+  /// Cards held by the player
   cards: vector<Card>,
+  /// Player's current balance in the game
   balance: u64,
+  /// Current bet amount for this player in the current round
   current_bet: u64,
-  total_contributed: u64, // Total amount contributed to all pots this hand
+  /// Total amount contributed to all pots this hand
+  total_contributed: u64,
+  /// Whether the player has folded this hand
   is_folded: bool,
+  /// Whether the player is all-in
   is_all_in: bool,
 }
 
 // Main game object
 public struct PokerGame has key {
   id: UID,
+  // ================ Game State ================
+  /// List of players in the game
   players: vector<Player>,
+  /// Deck of cards for the game
   deck: vector<Card>,
+  /// Community cards dealt on the table
   community_cards: vector<Card>,
-  pot: Balance<SUI>,
+  /// Main pot amount for current hand
+  pot: u64,
+  /// Side pots for all-in scenarios
   side_pots: vector<SidePot>,
-  buy_in: u64,
-  min_bet: u64,
-  /// Current bet amount for the round. Will be reset to 0 at the start of each betting round.
+  /// Current bet amount of the round
   current_bet: u64,
-  small_blind: u64,
-  big_blind: u64,
+  /// Current game hand dealer position (index in players vector)
   dealer_position: u64,
+  /// Current player  index in players vector that are in turn to act
   current_player: u64,
+  /// Current game state
   state: u8,
+  /// Last player position that raised the bet in this round
   last_raise_position: u64,
+  // ================ Game Configuration ================
+  /// Buy-in amount for the game
+  buy_in: u64,
+  /// Minimum bet amount (5% of buy-in)
+  min_bet: u64,
+  // ================ Game Metadata ================
+  /// Address of the game owner (creator)
   owner: address,
+  /// Number of hands played in this game
+  hand_played: u64,
+  /// Treasury balance that holds all players funds
+  treasury: Balance<SUI>,
 }
 
 // ===== Events =====
@@ -132,8 +159,7 @@ public struct GameStarted has copy, drop {
 public struct PlayerMoved has copy, drop {
   game_id: ID,
   player: address,
-  action: u8,
-  amount: u64,
+  action: PlayerAction,
 }
 
 public struct RoundChanged has copy, drop {
@@ -145,6 +171,10 @@ public struct GameEnded has copy, drop {
   game_id: ID,
   winners: vector<address>,
   amounts: vector<u64>,
+}
+
+public struct GameCanceled has copy, drop {
+  game_id: ID,
 }
 
 public struct PlayerWithdrawn has copy, drop {
@@ -161,13 +191,24 @@ public fun get_buy_in(game: &PokerGame): u64 { game.buy_in }
 
 public fun get_dealer_position(game: &PokerGame): u64 { game.dealer_position }
 
-public fun get_pot_balance(game: &PokerGame): u64 { game.pot.value() }
+public fun get_treasury_balance(game: &PokerGame): u64 { game.treasury.value() }
+
+public fun get_side_pots_count(game: &PokerGame): u64 {
+  game.side_pots.length()
+}
+
+public fun get_player_balance(game: &PokerGame, player: address): u64 {
+  let player_index = find_player_index(game, player);
+  game.players.borrow(player_index).balance
+}
 
 // Alias for accessors
 public use fun get_state as PokerGame.state;
 public use fun get_buy_in as PokerGame.buy_in;
 public use fun get_dealer_position as PokerGame.dealer_position;
-public use fun get_pot_balance as PokerGame.pot_balance;
+public use fun get_treasury_balance as PokerGame.treasury_balance;
+public use fun get_player_balance as PokerGame.player_balance;
+public use fun get_side_pots_count as PokerGame.side_pots_count;
 // ===== Game Functions =====
 
 /// Create a new poker game
@@ -179,39 +220,40 @@ public entry fun create(payment: Coin<SUI>, ctx: &mut TxContext): ID {
   // Calculate derived values from buy_in
   let buy_in = payment.value();
   let min_bet = buy_in / 20; // 5% of buy_in
-  let small_blind = min_bet / 2; // 50% of min_bet
-  let big_blind = min_bet; // 100% of min_bet
 
   // Check buy-in amount for creator
   assert!(buy_in >= MIN_BUY_IN, EInsufficientBuyIn);
 
+  let first_player = Player {
+    addr: owner_addr,
+    cards: vector[],
+    balance: buy_in,
+    current_bet: 0,
+    total_contributed: 0,
+    is_folded: false,
+    is_all_in: false,
+  };
+
   let game = PokerGame {
     id,
-    players: vector[
-      Player {
-        addr: owner_addr, // Creator automatically joins the game
-        cards: vector[],
-        balance: buy_in,
-        current_bet: 0,
-        total_contributed: 0,
-        is_folded: false,
-        is_all_in: false,
-      },
-    ],
+    // ===== Game State =====
+    players: vector[first_player],
     deck: vector[],
     community_cards: vector[],
-    pot: payment.into_balance(), // Create the initial pot with creator's payment
+    pot: 0,
     side_pots: vector[],
-    buy_in,
-    min_bet,
     current_bet: 0,
-    small_blind,
-    big_blind,
     dealer_position: 0,
     current_player: 0,
     state: STATE_WAITING_FOR_PLAYERS,
     last_raise_position: 0,
+    // ===== Game Configuration =====
+    buy_in,
+    min_bet,
+    // ===== Game Metadata =====
     owner: owner_addr,
+    hand_played: 0,
+    treasury: payment.into_balance(), // Initialize treasury with creator's payment
   };
 
   emit(GameCreated { game_id, buy_in });
@@ -229,44 +271,25 @@ public entry fun join(
   ctx: &mut TxContext,
 ) {
   let player_addr = ctx.sender();
-
-  // Check game state
   assert!(game.state == STATE_WAITING_FOR_PLAYERS, EGameInProgress);
-
-  // Check if player count is valid
-  assert!(game.players.length() < MAX_PLAYERS, EInvalidPlayerCount);
-
-  // Check if player already joined
-  let mut i = 0;
-  let len = game.players.length();
-  while (i < len) {
-    let player = game.players.borrow(i);
-    assert!(player.addr != player_addr, EAlreadyJoined);
-    i = i + 1;
-  };
-
-  // Check buy-in amount
-  assert!(payment.value() >= game.buy_in, EInsufficientBuyIn);
+  assert!(game.players.length() < MAX_PLAYERS, EGameFulled);
+  assert!(payment.value() == game.buy_in, EBuyInMismatch);
+  assert!(game.players.all!(|p| p.addr != player_addr), EAlreadyJoined);
 
   // Add player to the game
-  let player = Player {
-    addr: player_addr,
-    cards: vector[],
-    balance: game.buy_in,
-    current_bet: 0,
-    total_contributed: 0,
-    is_folded: false,
-    is_all_in: false,
-  };
-  game.players.push_back(player);
-
-  // Add payment to pot
-  let payment_balance = payment.into_balance();
-  game.pot.join(payment_balance);
-
-  // Emit event
-  let game_id = game.id.to_inner();
-  emit(PlayerJoined { game_id, player: player_addr });
+  game
+    .players
+    .push_back(Player {
+      addr: player_addr,
+      cards: vector[],
+      balance: game.buy_in,
+      current_bet: 0,
+      total_contributed: 0,
+      is_folded: false,
+      is_all_in: false,
+    });
+  game.treasury.join(payment.into_balance()); // Add payment to treasury
+  emit(PlayerJoined { game_id: game.id.to_inner(), player: player_addr });
 }
 
 public entry fun cancel_game(game: PokerGame, ctx: &mut TxContext) {
@@ -276,11 +299,19 @@ public entry fun cancel_game(game: PokerGame, ctx: &mut TxContext) {
   // Check if game is still waiting for players
   assert!(game.state == STATE_WAITING_FOR_PLAYERS, EInvalidGameState);
 
-  // Emit event and delete the game
-  let game_id = game.id.to_inner();
-  emit(GameEnded { game_id, winners: vector[], amounts: vector[] });
-  let PokerGame { id, pot, .. } = game;
-  transfer::public_transfer(pot.into_coin(ctx), ctx.sender());
+  let PokerGame { id, mut treasury, players, .. } = game;
+  players.do!(|player| {
+    // Refund each player's balance
+    if (player.balance > 0) {
+      let funds = treasury.split(player.balance);
+      transfer::public_transfer(funds.into_coin(ctx), player.addr);
+    };
+  });
+  treasury.destroy_zero();
+
+  emit(GameCanceled { game_id: id.to_inner() });
+
+  // Delete the game
   id.delete();
 }
 
@@ -318,15 +349,9 @@ entry fun start_game_with_seed(
   assert!(ctx.sender() == game.owner, EInvalidPlayer);
 
   initialize_deck(game);
-
-  // Shuffle the deck
   shuffle_deck(game, seed);
-
-  // Deal cards to players
   deal_player_cards(game);
-
-  // Set blinds
-  collect_blinds(game);
+  set_blinds(game);
 
   // Update game state
   game.state = STATE_PRE_FLOP;
@@ -351,9 +376,9 @@ entry fun withdraw(game: &mut PokerGame, ctx: &mut TxContext) {
   let player = game.players.borrow_mut(player_index);
   let amount = player.balance;
   assert!(amount > 0, EInvalidAction); // Player must have winnings to withdraw
-  assert!(game.pot.value() >= amount, EInvalidAction); // Check if pot has enough balance
+  assert!(game.treasury.value() >= amount, EInvalidAction); // Check if pot has enough balance
   player.balance = 0; // Reset player balance to 0
-  let winnings = game.pot.split(amount).into_coin(ctx);
+  let winnings = game.treasury.split(amount).into_coin(ctx);
   transfer::public_transfer(winnings, player_addr); // Take balance from game pot to player's coin
   emit(PlayerWithdrawn {
     game_id: game.id.to_inner(),
@@ -364,39 +389,17 @@ entry fun withdraw(game: &mut PokerGame, ctx: &mut TxContext) {
 
 // Player action: fold
 public entry fun fold(game: &mut PokerGame, ctx: &mut TxContext) {
-  let player_addr = ctx.sender();
-  let player_index = find_player_index(game, player_addr);
-  assert!(can_act(game, player_index), ENotYourTurn);
-  let player = game.players.borrow_mut(player_index);
-  player.is_folded = true;
-  complete_player_action(game, player_addr, ACTION_FOLD, 0);
+  player_act(game, ctx.sender(), PlayerAction::Fold);
 }
 
 // Player action: check
 public entry fun check(game: &mut PokerGame, ctx: &mut TxContext) {
-  let player_addr = ctx.sender();
-  let player_index = find_player_index(game, player_addr);
-  assert!(can_act(game, player_index), ENotYourTurn);
-  let player = game.players.borrow(player_index);
-  assert!(game.current_bet == player.current_bet, EInvalidAction); // Cannot "check" if current bet is not equal to other players's bet
-  complete_player_action(game, player_addr, ACTION_CHECK, 0);
+  player_act(game, ctx.sender(), PlayerAction::Check);
 }
 
 // Player action: call
 public entry fun call(game: &mut PokerGame, ctx: &mut TxContext) {
-  let player_addr = ctx.sender();
-  let player_index = find_player_index(game, player_addr);
-  assert!(can_act(game, player_index), ENotYourTurn);
-  let player = game.players.borrow_mut(player_index);
-  let call_amount = std::u64::min(
-    game.current_bet - player.current_bet, // Amount needed to call
-    player.balance, // Use available balance if its lesser (all-in scenario)
-  );
-  player.balance = player.balance - call_amount;
-  player.current_bet = player.current_bet + call_amount;
-  player.total_contributed = player.total_contributed + call_amount;
-  if (player.balance == 0) player.is_all_in = true;
-  complete_player_action(game, player_addr, ACTION_CALL, call_amount);
+  player_act(game, ctx.sender(), PlayerAction::Call);
 }
 
 // Player action: bet or raise
@@ -405,38 +408,7 @@ public entry fun bet_or_raise(
   amount: u64,
   ctx: &mut TxContext,
 ) {
-  let player_addr = ctx.sender();
-  let player_index = find_player_index(game, player_addr);
-  assert!(can_act(game, player_index), ENotYourTurn);
-  assert!(amount >= game.min_bet, EInvalidAmount);
-  let player = game.players.borrow_mut(player_index);
-  assert!(amount <= player.balance, EInvalidAmount);
-  assert!(player.current_bet + amount > game.current_bet, EInvalidAction); // Amount must be enough to raise the game's current bet
-  player.balance = player.balance - amount;
-  player.current_bet = player.current_bet + amount;
-  player.total_contributed = player.total_contributed + amount;
-  game.current_bet = player.current_bet; // Update current bet to player's bet
-  game.last_raise_position = player_index;
-  if (player.balance == 0) player.is_all_in = true;
-  complete_player_action(game, player_addr, ACTION_BET_OR_RAISE, amount);
-}
-
-// Helper function to complete player action (emit event and advance game)
-fun complete_player_action(
-  game: &mut PokerGame,
-  player_addr: address,
-  action: u8,
-  amount: u64,
-) {
-  emit(PlayerMoved {
-    game_id: game.id.to_inner(),
-    player: player_addr,
-    action,
-    amount,
-  });
-  let next_player = get_next_active_player(game);
-  if (next_player.is_some()) game.current_player = next_player.destroy_some();
-  if (is_round_complete(game)) advance_game_state(game);
+  player_act(game, ctx.sender(), PlayerAction::BetOrRaise { amount });
 }
 
 // ===== Helper Functions =====
@@ -505,39 +477,45 @@ fun deal_player_cards(game: &mut PokerGame) {
   }
 }
 
-/// Collect blinds from players
-fun collect_blinds(game: &mut PokerGame) {
-  let player_count = game.players.length();
-
+/// Set blinds by taking chips (balances) from the small blinds and big blinds players.
+fun set_blinds(game: &mut PokerGame) {
+  let sb_pos = (game.dealer_position + 1) % game.players.length();
+  let bb_pos = (game.dealer_position + 2) % game.players.length();
   // Small blind
-  let sb_pos = (game.dealer_position + 1) % player_count;
-  let player = game.players.borrow_mut(sb_pos);
-  let sb_amount = if (player.balance < game.small_blind) { player.balance }
-  else {
-    game.small_blind
+  let sb_amount = {
+    let player = game.players.borrow_mut(sb_pos);
+    let amount = std::u64::min(player.balance, game.min_bet / 2);
+    player.balance = player.balance - amount;
+    player.current_bet = amount;
+    player.total_contributed = player.total_contributed + amount;
+    if (player.balance == 0) player.is_all_in = true;
+    emit(PlayerMoved {
+      game_id: game.id.to_inner(),
+      player: player.addr,
+      action: PlayerAction::BetOrRaise { amount },
+    });
+    amount
   };
-  player.balance = player.balance - sb_amount;
-  player.current_bet = sb_amount;
-  player.total_contributed = player.total_contributed + sb_amount;
-  if (player.balance == 0) {
-    player.is_all_in = true;
-  };
-
   // Big blind
-  let bb_pos = (game.dealer_position + 2) % player_count;
-  let player = game.players.borrow_mut(bb_pos);
-  let bb_amount = if (player.balance < game.big_blind) { player.balance } else {
-    game.big_blind
+  let bb_amount = {
+    let player = game.players.borrow_mut(bb_pos);
+    let amount = std::u64::min(player.balance, game.min_bet);
+    player.balance = player.balance - amount;
+    player.current_bet = amount;
+    player.total_contributed = player.total_contributed + amount;
+    if (player.balance == 0) player.is_all_in = true;
+    emit(PlayerMoved {
+      game_id: game.id.to_inner(),
+      player: player.addr,
+      action: PlayerAction::BetOrRaise { amount },
+    });
+    amount
   };
-  player.balance = player.balance - bb_amount;
-  player.current_bet = bb_amount;
-  player.total_contributed = player.total_contributed + bb_amount;
-  if (player.balance == 0) {
-    player.is_all_in = true;
-  };
-
-  // Set current bet to big blind
-  game.current_bet = bb_amount;
+  // Update related game state
+  game.pot = sb_amount + bb_amount; // Reset pot to 0 and add blinds
+  game.current_bet = bb_amount; // Set current bet to big blind amount
+  game.last_raise_position = bb_pos; // Last raiser is the big blind
+  game.current_player = (bb_pos + 1) % game.players.length(); // Next player to act is after big blind
 }
 
 /// Find player index by address. Abort with `EInvalidPlayer` if not found.
@@ -557,6 +535,61 @@ fun can_act(game: &PokerGame, player_index: u64): bool {
   game.state <= STATE_RIVER &&
   game.current_player == player_index &&
   game.players.borrow(player_index).is_folded == false
+}
+
+fun player_act(
+  game: &mut PokerGame,
+  player_addr: address,
+  action: PlayerAction,
+) {
+  let player_index = find_player_index(game, player_addr);
+  assert!(can_act(game, player_index), EInvalidAction);
+  let player = game.players.borrow_mut(player_index);
+
+  match (action) {
+    PlayerAction::Fold => {
+      player.is_folded = true;
+      player.current_bet = 0; // Reset current bet on fold
+      player.total_contributed = 0; // Reset total contributed on fold
+    },
+    PlayerAction::Check => {
+      assert!(game.current_bet == player.current_bet, EInvalidAction);
+      // No action needed for check, just complete the turn
+    },
+    PlayerAction::Call => {
+      let call_amount = std::u64::min(
+        game.current_bet - player.current_bet, // Amount needed to call
+        player.balance, // Use available balance if its lesser (all-in scenario)
+      );
+      player.balance = player.balance - call_amount;
+      player.current_bet = player.current_bet + call_amount;
+      player.total_contributed = player.total_contributed + call_amount;
+      if (player.balance == 0) player.is_all_in = true;
+    },
+    PlayerAction::BetOrRaise { amount } => {
+      assert!(amount <= player.balance, EInvalidAmount);
+      assert!(player.current_bet + amount > game.current_bet, EInvalidAction); // Amount must be enough to raise the game's current bet
+      player.balance = player.balance - amount;
+      player.current_bet = player.current_bet + amount;
+      player.total_contributed = player.total_contributed + amount;
+      game.current_bet = player.current_bet; // Update current bet to player's bet
+      game.last_raise_position = player_index;
+      if (player.balance == 0) player.is_all_in = true;
+    },
+  };
+  complete_player_action(game, player_addr, action);
+}
+
+// Helper function to complete player action (emit event and advance game)
+fun complete_player_action(
+  game: &mut PokerGame,
+  player: address,
+  action: PlayerAction,
+) {
+  emit(PlayerMoved { game_id: game.id.to_inner(), player, action });
+  let next_player = get_next_active_player(game);
+  if (next_player.is_some()) game.current_player = next_player.destroy_some();
+  if (is_round_complete(game)) advance_game_state(game);
 }
 
 /// Update the game's current player to the next active player.
@@ -581,6 +614,7 @@ fun is_round_complete(game: &PokerGame): bool {
   // Take index of all active players (not folded and not all-in)
   let mut active_players: vector<u64> = vector[];
   let mut i = 0;
+
   while (i < player_count) {
     let player = game.players.borrow(i);
     if (!player.is_folded && !player.is_all_in) {
@@ -776,87 +810,9 @@ fun sort_bet_levels(levels: &mut vector<u64>) {
   };
 }
 
-/// Rotate dealer position and reset for new hand
-public entry fun start_new_hand(game: &mut PokerGame, ctx: &mut TxContext) {
-  // Can only start new hand if current game is over
-  assert!(game.state == STATE_GAME_OVER, EInvalidGameState);
-
-  // Only owner can start new hand
-  assert!(ctx.sender() == game.owner, EInvalidPlayer);
-
-  let player_count = game.players.length();
-  assert!(player_count >= MIN_PLAYERS, EInvalidPlayerCount);
-
-  // Rotate dealer position
-  game.dealer_position = (game.dealer_position + 1) % player_count;
-
-  // Reset game state for new hand
-  reset_for_new_hand(game);
-
-  // Initialize and shuffle deck with simple rotation-based shuffle
-  initialize_deck(game);
-  simple_shuffle_deck(game);
-
-  // Deal new cards
-  deal_player_cards(game);
-
-  // Collect blinds with rotation
-  collect_blinds(game);
-
-  // Set game state to pre-flop
-  game.state = STATE_PRE_FLOP;
-
-  // Set current player (after big blind)
-  game.current_player = (game.dealer_position + 3) % player_count;
-  game.last_raise_position = (game.dealer_position + 2) % player_count;
-
-  // Emit events
-  let game_id = game.id.to_inner();
-  emit(GameStarted { game_id, num_players: player_count });
-  emit(RoundChanged { game_id, new_state: game.state });
-}
-
-// Simple shuffle without external randomness for new hands
-fun simple_shuffle_deck(game: &mut PokerGame) {
-  let deck_size = game.deck.length();
-  let mut i = 0;
-
-  // Simple deterministic shuffle based on dealer position
-  while (i < deck_size) {
-    let j = (i + game.dealer_position + 7) % deck_size;
-    if (i != j) {
-      game.deck.swap(i, j);
-    };
-    i = i + 1;
-  };
-}
-
-// Reset all game state for a new hand
-fun reset_for_new_hand(game: &mut PokerGame) {
-  let player_count = game.players.length();
-  let mut i = 0;
-
-  // Reset all player states
-  while (i < player_count) {
-    let player = game.players.borrow_mut(i);
-    player.cards = vector[];
-    player.current_bet = 0;
-    player.total_contributed = 0;
-    player.is_folded = false;
-    player.is_all_in = false;
-    i = i + 1;
-  };
-
-  // Reset game state
-  game.community_cards = vector[];
-  game.side_pots = vector[];
-  game.current_bet = 0;
-  game.last_raise_position = 0;
-}
-
 fun count_active_players(game: &PokerGame): u64 {
   let player_count = game.players.length();
-  let mut active_players = 0;
+  let mut active_players = game.players.count!(|player| !player.is_folded);
 
   let mut i = 0;
   while (i < player_count) {
@@ -881,7 +837,7 @@ fun deal_community_cards(game: &mut PokerGame, count: u64) {
 
 fun distribute_pot(game: &mut PokerGame) {
   let player_count = game.players.length();
-  let active_count = count_active_players(game);
+  let active_count = game.players.count!(|player| !player.is_folded);
 
   let mut winners = vector[];
   let mut amounts = vector[];
@@ -893,7 +849,7 @@ fun distribute_pot(game: &mut PokerGame) {
       let player = game.players.borrow(i);
       if (!player.is_folded) {
         let winner_addr = player.addr;
-        let pot_amount = game.pot.value();
+        let pot_amount = game.pot;
 
         winners.push_back(winner_addr);
         amounts.push_back(pot_amount);

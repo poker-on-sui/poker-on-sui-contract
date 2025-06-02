@@ -22,8 +22,7 @@ public fun create_and_join_game_as(player: address): Scenario {
   scenario
 }
 
-// ===== Player Actions Functions =====
-// Should always advance the scenario to the next transaction with player_X
+// ===== Player Actions Macros =====
 
 /// Mutates the poker game state as a specific player
 public macro fun act_as(
@@ -55,6 +54,8 @@ public macro fun inspect_as(
 
 use fun act_as as ts::Scenario.act_as;
 use fun inspect_as as ts::Scenario.inspect_as;
+
+// ===== Player Actions Functions =====
 
 /// Joins a player to the poker game with the required buy-in
 public fun join_as(scenario: &mut Scenario, player: address) {
@@ -95,11 +96,6 @@ public fun raise_as(scenario: &mut Scenario, player: address, amount: u64) {
 /// Withdraws the player's winnings from the game and returns the amount withdrawn
 public fun withdraw_as(scenario: &mut Scenario, player: address) {
   scenario.act_as!(player, |game| game.withdraw(scenario.ctx()));
-}
-
-/// Rotate dealer position and reset for new hand
-public fun start_new_hand_as(scenario: &mut Scenario, player: address) {
-  scenario.act_as!(player, |game| game.start_new_hand(scenario.ctx()));
 }
 
 // ===== Other Helper Functions =====
