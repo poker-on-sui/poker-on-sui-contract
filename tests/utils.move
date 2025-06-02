@@ -17,7 +17,7 @@ public fun create_and_join_game_as(player: address): Scenario {
 
   // Create the poker game with creator automatically joining
   let coin = mint_for_testing<SUI>(BUY_IN, scenario.ctx());
-  game::create_game(coin, scenario.ctx());
+  game::create(coin, scenario.ctx());
 
   scenario
 }
@@ -30,7 +30,7 @@ public fun join_as(scenario: &mut Scenario, player: address) {
   scenario.next_tx(player);
   let mut game = scenario.take_shared<PokerGame>();
   let coin = mint_for_testing<SUI>(game.buy_in(), scenario.ctx());
-  game.join_game(coin, scenario.ctx());
+  game.join(coin, scenario.ctx());
   ts::return_shared(game);
 }
 
@@ -67,19 +67,15 @@ public fun call_as(scenario: &mut Scenario, player: address) {
   ts::return_shared(game);
 }
 
-/// Makes a player bet a specific amount
-public fun bet_as(scenario: &mut Scenario, player: address, amount: u64) {
+/// Makes a player bet or raise a specific amount
+public fun bet_or_raise_as(
+  scenario: &mut Scenario,
+  player: address,
+  amount: u64,
+) {
   scenario.next_tx(player);
   let mut game = scenario.take_shared<PokerGame>();
-  game.bet(amount, scenario.ctx());
-  ts::return_shared(game);
-}
-
-/// Makes a player raise the current bet by a specific amount
-public fun raise_as(scenario: &mut Scenario, player: address, amount: u64) {
-  scenario.next_tx(player);
-  let mut game = scenario.take_shared<PokerGame>();
-  game.raise(amount, scenario.ctx());
+  game.bet_or_raise(amount, scenario.ctx());
   ts::return_shared(game);
 }
 

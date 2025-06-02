@@ -50,11 +50,11 @@ use fun tests_utils::start_as as ts::Scenario.start_as;
 use fun tests_utils::call_as as ts::Scenario.call_as;
 use fun tests_utils::fold_as as ts::Scenario.fold_as;
 use fun tests_utils::check_as as ts::Scenario.check_as;
-use fun tests_utils::bet_as as ts::Scenario.bet_as;
-use fun tests_utils::raise_as as ts::Scenario.raise_as;
+use fun tests_utils::bet_or_raise_as as ts::Scenario.bet_or_raise_as;
 use fun tests_utils::check_game_state_as as ts::Scenario.check_game_state_as;
 use fun tests_utils::withdraw_as as ts::Scenario.withdraw_as;
 use fun tests_utils::start_new_hand_as as ts::Scenario.start_new_hand_as;
+
 // ===== Game tests =====
 
 #[test]
@@ -68,7 +68,7 @@ fun test_join_game_insufficient_buy_in() {
   {
     let mut game = scenario.take_shared<PokerGame>();
     let coin = mint_for_testing<SUI>(BUY_IN - 1, scenario.ctx()); // Less than required
-    game.join_game(coin, scenario.ctx());
+    game.join(coin, scenario.ctx());
     ts::return_shared(game);
   };
 
@@ -167,7 +167,7 @@ fun test_player_actions() {
   scenario.call_as(PLAYER3); // Player after big blind (position 3)
 
   // Next player raises
-  scenario.raise_as(PLAYER4, MIN_BET * 3); // Player 4 raises to triple the minimum bet
+  scenario.bet_or_raise_as(PLAYER4, MIN_BET * 3); // Player 4 raises to triple the minimum bet
 
   // Dealer folds
   scenario.fold_as(PLAYER0);
@@ -208,7 +208,7 @@ fun test_full_game_flow() {
   scenario.check_as(PLAYER0); // Dealer
 
   // Turn actions
-  scenario.bet_as(PLAYER1, MIN_BET); // First to act (small blind)
+  scenario.bet_or_raise_as(PLAYER1, MIN_BET); // First to act (small blind)
 
   scenario.call_as(PLAYER2); // Big blind
 
@@ -240,7 +240,7 @@ fun test_all_in_scenario() {
   scenario.start_as(PLAYER0);
 
   // PLAYER0 goes all-in pre-flop (first to act in 3-player)
-  scenario.raise_as(PLAYER0, BUY_IN);
+  scenario.bet_or_raise_as(PLAYER0, BUY_IN);
 
   // Player1 calls
   scenario.call_as(PLAYER1);
@@ -281,7 +281,7 @@ fun test_four_player_game_flow() {
   scenario.check_as(PLAYER0); // Dealer (position 0)
 
   // Turn actions
-  scenario.bet_as(PLAYER1, MIN_BET); // First to act on turn (position 1)
+  scenario.bet_or_raise_as(PLAYER1, MIN_BET); // First to act on turn (position 1)
   scenario.call_as(PLAYER2); // Position 2
   scenario.call_as(PLAYER3); // Position 3
   scenario.call_as(PLAYER4); // Position 4
@@ -313,7 +313,7 @@ fun test_four_player_all_in_scenario() {
   scenario.start_as(PLAYER0);
 
   // PLAYER3 goes all-in pre-flop (first to act in 5-player game)
-  scenario.raise_as(PLAYER3, BUY_IN);
+  scenario.bet_or_raise_as(PLAYER3, BUY_IN);
 
   // PLAYER4 calls
   scenario.call_as(PLAYER4);
@@ -383,7 +383,7 @@ fun test_side_pot_all_in_scenario() {
   scenario.start_as(PLAYER0);
 
   // PLAYER0 goes all-in pre-flop (first to act in 3-player)
-  scenario.raise_as(PLAYER0, BUY_IN); // Raise to all-in
+  scenario.bet_or_raise_as(PLAYER0, BUY_IN); // Raise to all-in
   scenario.call_as(PLAYER1); // Player1 calls
   scenario.call_as(PLAYER2); // Player2 calls
 
@@ -409,7 +409,7 @@ fun test_side_pot_multiple_all_ins() {
   // Pre-flop: PLAYER0 (dealer), PLAYER1 (SB), PLAYER2 (BB), PLAYER3 first to act
 
   // PLAYER3 raises significantly
-  scenario.raise_as(PLAYER3, MIN_BET * 4); // Raise to 4x min bet
+  scenario.bet_or_raise_as(PLAYER3, MIN_BET * 4); // Raise to 4x min bet
 
   // PLAYER0 calls
   scenario.call_as(PLAYER0);
@@ -428,7 +428,7 @@ fun test_side_pot_multiple_all_ins() {
     // Bet half of remaining balance to leave room for raises
     let remaining_balance = BUY_IN - MIN_BET * 4;
     let bet_amount = remaining_balance / 2;
-    scenario.bet_as(PLAYER1, bet_amount);
+    scenario.bet_or_raise_as(PLAYER1, bet_amount);
   };
 
   // PLAYER2 raises to a larger amount
@@ -436,14 +436,14 @@ fun test_side_pot_multiple_all_ins() {
     // Raise to 3/4 of remaining balance
     let remaining_balance = BUY_IN - MIN_BET * 4;
     let raise_amount = (remaining_balance * 3) / 4;
-    scenario.raise_as(PLAYER2, raise_amount);
+    scenario.bet_or_raise_as(PLAYER2, raise_amount);
   };
 
   // PLAYER3 goes all-in
   {
     // Go all-in with all remaining balance
     let remaining_balance = BUY_IN - MIN_BET * 4;
-    scenario.raise_as(PLAYER3, remaining_balance);
+    scenario.bet_or_raise_as(PLAYER3, remaining_balance);
   };
 
   // PLAYER0 calls to see the action through to showdown
@@ -594,7 +594,7 @@ fun test_withdraw_no_winnings() {
   scenario.start_as(PLAYER0);
 
   // Complete game - PLAYER0 wins, others lose
-  scenario.raise_as(PLAYER0, BUY_IN); // PLAYER0 goes all-in
+  scenario.bet_or_raise_as(PLAYER0, BUY_IN); // PLAYER0 goes all-in
   scenario.call_as(PLAYER1);
   scenario.fold_as(PLAYER2);
 

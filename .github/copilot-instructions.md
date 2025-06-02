@@ -55,3 +55,4 @@ This project is a Move smart contract implementation of a Texas Hold'em poker ga
 - Include both positive and negative test cases with `#[expected_failure]`
 - Use assertions and other testing utilities from `sui::test_utils` where applicable
 - Prefer using `assert!(condition, error_code);` over `if !condition { abort EInvalidCondition; }` for evaluating conditions
+- Prefer using vector literals `vector[]` over `vector::empty()` for initializing or setting empty vectors
