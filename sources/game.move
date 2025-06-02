@@ -12,6 +12,8 @@ const CARDS_PER_PLAYER: u64 = 2;
 const SEED_LENGTH: u64 = 32;
 const MIN_BUY_IN: u64 = 100_000_000; // 0.1 SUI
 
+// ===== Game Constants =====
+
 // Error codes
 const EGameInProgress: u64 = 0x0000;
 const EInvalidPlayerCount: u64 = 0x0001;
@@ -24,14 +26,6 @@ const EAlreadyJoined: u64 = 0x0009;
 const EInvalidSeed: u64 = 0x000A;
 const EInvalidGameState: u64 = 0x000B;
 const EInvalidHandSize: u64 = 0x000C;
-
-// Card representation
-// Suit: 0 = Hearts, 1 = Diamonds, 2 = Clubs, 3 = Spades
-// Value: 2-14 (2-10, Jack=11, Queen=12, King=13, Ace=14)
-public struct Card has copy, drop, store {
-  suit: u8,
-  value: u8,
-}
 
 // Player actions
 const ACTION_FOLD: u8 = 0;
@@ -60,6 +54,17 @@ const HAND_FULL_HOUSE: u8 = 6;
 const HAND_FOUR_OF_A_KIND: u8 = 7;
 const HAND_STRAIGHT_FLUSH: u8 = 8;
 const HAND_ROYAL_FLUSH: u8 = 9;
+
+// ===== Game Structs =====
+
+/// Card representation
+///
+/// - Suit: 0 = Hearts, 1 = Diamonds, 2 = Clubs, 3 = Spades
+/// - Value: 2-14 (2-10, Jack=11, Queen=12, King=13, Ace=14)
+public struct Card has copy, drop, store {
+  suit: u8,
+  value: u8,
+}
 
 // Hand evaluation result
 public struct HandRank has copy, drop, store {
@@ -106,7 +111,8 @@ public struct PokerGame has key {
   owner: address,
 }
 
-// Event declarations
+// ===== Events =====
+
 public struct GameCreated has copy, drop {
   game_id: sui::object::ID,
   buy_in: u64,
@@ -140,10 +146,41 @@ public struct GameEnded has copy, drop {
   amounts: vector<u64>,
 }
 
-// Create a new poker game
-public entry fun create_game(payment: Coin<SUI>, ctx: &mut TxContext) {
+public struct PlayerWithdrawn has copy, drop {
+  game_id: sui::object::ID,
+  player: address,
+  amount: u64,
+}
+
+// ===== Accessors =====
+
+public fun get_state(game: &PokerGame): u8 { game.state }
+
+public fun get_buy_in(game: &PokerGame): u64 { game.buy_in }
+
+public fun get_dealer_position(game: &PokerGame): u64 { game.dealer_position }
+
+public fun get_pot_balance(game: &PokerGame): u64 { game.pot.value() }
+
+public fun get_self_balance(game: &PokerGame, ctx: &mut TxContext): u64 {
+  let player_index = find_player_index(game, ctx.sender());
+  assert!(player_index < game.players.length(), EInvalidPlayer);
+  let player = game.players.borrow(player_index);
+  player.balance
+}
+
+// Alias for accessors
+public use fun get_state as PokerGame.state;
+public use fun get_buy_in as PokerGame.buy_in;
+public use fun get_dealer_position as PokerGame.dealer_position;
+public use fun get_pot_balance as PokerGame.pot_balance;
+
+// ===== Game Functions =====
+
+/// Create a new poker game
+public entry fun create_game(payment: Coin<SUI>, ctx: &mut TxContext): ID {
   let id = sui::object::new(ctx);
-  let game_id = sui::object::uid_to_inner(&id);
+  let game_id = id.to_inner();
 
   // Calculate derived values from buy_in
   let buy_in = payment.value();
@@ -152,9 +189,7 @@ public entry fun create_game(payment: Coin<SUI>, ctx: &mut TxContext) {
   let big_blind = min_bet; // 100% of min_bet
 
   // Check buy-in amount for creator
-  if (payment.value() < MIN_BUY_IN) {
-    abort EInsufficientBuyIn
-  };
+  assert!(buy_in >= MIN_BUY_IN, EInsufficientBuyIn);
 
   // Create the initial pot with creator's payment
   let mut pot = balance::zero<SUI>();
@@ -194,6 +229,8 @@ public entry fun create_game(payment: Coin<SUI>, ctx: &mut TxContext) {
   sui::event::emit(PlayerJoined { game_id, player: ctx.sender() });
 
   sui::transfer::share_object(game);
+
+  game_id
 }
 
 // Join an existing poker game
@@ -205,30 +242,22 @@ public entry fun join_game(
   let player_addr = ctx.sender();
 
   // Check game state
-  if (game.state != STATE_WAITING_FOR_PLAYERS) {
-    abort EGameInProgress
-  };
+  assert!(game.state == STATE_WAITING_FOR_PLAYERS, EGameInProgress);
 
   // Check if player count is valid
-  if (std::vector::length(&game.players) >= MAX_PLAYERS) {
-    abort EInvalidPlayerCount
-  };
+  assert!(game.players.length() < MAX_PLAYERS, EInvalidPlayerCount);
 
   // Check if player already joined
   let mut i = 0;
-  let len = std::vector::length(&game.players);
+  let len = game.players.length();
   while (i < len) {
-    let player = std::vector::borrow(&game.players, i);
-    if (player.addr == player_addr) {
-      abort EAlreadyJoined
-    };
+    let player = game.players.borrow(i);
+    assert!(player.addr != player_addr, EAlreadyJoined);
     i = i + 1;
   };
 
   // Check buy-in amount
-  if (payment.value() < game.buy_in) {
-    abort EInsufficientBuyIn
-  };
+  assert!(payment.value() >= game.buy_in, EInsufficientBuyIn);
 
   // Add player to the game
   let player = Player {
@@ -251,26 +280,18 @@ public entry fun join_game(
   sui::event::emit(PlayerJoined { game_id, player: player_addr });
 }
 
-public entry fun cancel_game(
-  game: PokerGame,
-  wallet: &mut Coin<SUI>,
-  ctx: &mut TxContext,
-) {
+public entry fun cancel_game(game: PokerGame, ctx: &mut TxContext) {
   // Only owner can cancel the game
-  if (ctx.sender() != game.owner) {
-    abort EInvalidPlayer
-  };
+  assert!(ctx.sender() == game.owner, EInvalidPlayer);
 
   // Check if game is still waiting for players
-  if (game.state != STATE_WAITING_FOR_PLAYERS) {
-    abort EInvalidGameState
-  };
+  assert!(game.state == STATE_WAITING_FOR_PLAYERS, EInvalidGameState);
 
   // Emit event and delete the game
-  let game_id = sui::object::uid_to_inner(&game.id);
+  let game_id = game.id.to_inner();
   sui::event::emit(GameEnded { game_id, winners: vector[], amounts: vector[] });
   let PokerGame { id, pot, .. } = game;
-  wallet.join(pot.into_coin(ctx));
+  transfer::public_transfer(pot.into_coin(ctx), ctx.sender());
   id.delete();
 }
 
@@ -296,15 +317,16 @@ entry fun start_game_with_seed(
 ) {
   let player_count = game.players.length();
 
-  if (player_count < MIN_PLAYERS || player_count > MAX_PLAYERS) {
-    abort EInvalidPlayerCount
-  };
+  assert!(
+    player_count >= MIN_PLAYERS && player_count <= MAX_PLAYERS,
+    EInvalidPlayerCount,
+  );
 
-  if (seed.length() != SEED_LENGTH) abort EInvalidSeed;
-  if (game.state != STATE_WAITING_FOR_PLAYERS) abort EInvalidGameState;
+  assert!(seed.length() == SEED_LENGTH, EInvalidSeed);
+  assert!(game.state == STATE_WAITING_FOR_PLAYERS, EInvalidGameState);
 
   // Only owner can start the game
-  if (ctx.sender() != game.owner) abort EInvalidPlayer;
+  assert!(ctx.sender() == game.owner, EInvalidPlayer);
 
   initialize_deck(game);
 
@@ -325,34 +347,66 @@ entry fun start_game_with_seed(
   game.last_raise_position = (game.dealer_position + 2) % player_count; // Big blind is the last raiser
 
   // Emit event
-  let game_id = sui::object::uid_to_inner(&game.id);
+  let game_id = game.id.to_inner();
   sui::event::emit(GameStarted { game_id, num_players: player_count });
   sui::event::emit(RoundChanged { game_id, new_state: game.state });
+}
+
+// ===== Player Actions =====
+
+/// Withdraw balance from the game
+entry fun withdraw(game: &mut PokerGame, ctx: &mut TxContext) {
+  // Game must be over to claim pot
+  assert!(game.state == STATE_GAME_OVER, EInvalidGameState);
+
+  let player_addr = ctx.sender();
+  let player_index = find_player_index(game, player_addr);
+
+  // Validate player exists in game
+  assert!(player_index < game.players.length(), EInvalidPlayer);
+
+  let player = game.players.borrow_mut(player_index);
+  let withdraw_amount = player.balance;
+
+  // Player must have winnings to withdraw
+  assert!(withdraw_amount > 0, EInvalidAction);
+
+  // Check if pot has enough balance
+  assert!(game.pot.value() >= withdraw_amount, EInvalidAction);
+
+  // Reset player balance to 0
+  player.balance = 0;
+
+  let winnings = game.pot.split(withdraw_amount).into_coin(ctx);
+
+  // Take balance from game pot to player's coin
+  transfer::public_transfer(winnings, player_addr);
+
+  sui::event::emit(PlayerWithdrawn {
+    game_id: game.id.to_inner(),
+    player: player_addr,
+    amount: withdraw_amount,
+  });
 }
 
 // Helper function to validate player action prerequisites
 fun validate_player_action(game: &PokerGame, ctx: &TxContext): u64 {
   // Validate game state
-  if (game.state < STATE_PRE_FLOP || game.state > STATE_RIVER) {
-    abort EInvalidGameState
-  };
+  assert!(
+    game.state >= STATE_PRE_FLOP && game.state <= STATE_RIVER,
+    EInvalidGameState,
+  );
 
   let player_addr = ctx.sender();
-  let player_count = std::vector::length(&game.players);
+  let player_count = game.players.length();
   let player_index = find_player_index(game, player_addr);
 
   // Validate player
-  if (player_index >= player_count) {
-    abort EInvalidPlayer
-  };
-  if (player_index != game.current_player) {
-    abort ENotYourTurn
-  };
+  assert!(player_index < player_count, EInvalidPlayer);
+  assert!(player_index == game.current_player, ENotYourTurn);
 
-  let player = std::vector::borrow(&game.players, player_index);
-  if (player.is_folded) {
-    abort EInvalidAction
-  };
+  let player = game.players.borrow(player_index);
+  assert!(!player.is_folded, EInvalidAction);
 
   player_index
 }
@@ -365,7 +419,7 @@ fun complete_player_action(
   amount: u64,
 ) {
   // Emit action event
-  let game_id = sui::object::uid_to_inner(&game.id);
+  let game_id = game.id.to_inner();
   sui::event::emit(PlayerMoved {
     game_id,
     player: player_addr,
@@ -387,7 +441,7 @@ public entry fun fold(game: &mut PokerGame, ctx: &mut TxContext) {
   let player_index = validate_player_action(game, ctx);
   let player_addr = ctx.sender();
 
-  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  let player = game.players.borrow_mut(player_index);
   player.is_folded = true;
 
   complete_player_action(game, player_addr, ACTION_FOLD, 0);
@@ -398,10 +452,8 @@ public entry fun check(game: &mut PokerGame, ctx: &mut TxContext) {
   let player_index = validate_player_action(game, ctx);
   let player_addr = ctx.sender();
 
-  let player = std::vector::borrow(&game.players, player_index);
-  if (game.current_bet != player.current_bet) {
-    abort EInvalidAction
-  };
+  let player = game.players.borrow(player_index);
+  assert!(game.current_bet == player.current_bet, EInvalidAction);
 
   complete_player_action(game, player_addr, ACTION_CHECK, 0);
 }
@@ -411,12 +463,10 @@ public entry fun call(game: &mut PokerGame, ctx: &mut TxContext) {
   let player_index = validate_player_action(game, ctx);
   let player_addr = ctx.sender();
 
-  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  let player = game.players.borrow_mut(player_index);
   let call_amount = game.current_bet - player.current_bet;
 
-  if (call_amount > player.balance) {
-    abort EInvalidBet
-  };
+  assert!(call_amount <= player.balance, EInvalidBet);
 
   player.balance = player.balance - call_amount;
   player.current_bet = game.current_bet;
@@ -434,21 +484,15 @@ public entry fun bet(game: &mut PokerGame, amount: u64, ctx: &mut TxContext) {
   let player_addr = ctx.sender();
 
   // For a bet, there should be no current bet
-  if (game.current_bet != 0) {
-    abort EInvalidAction
-  };
+  assert!(game.current_bet == 0, EInvalidAction);
 
   // Validate minimum bet amount
-  if (amount < game.min_bet) {
-    abort EInvalidBet
-  };
+  assert!(amount >= game.min_bet, EInvalidBet);
 
-  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  let player = game.players.borrow_mut(player_index);
 
   // Check if player has enough balance for bet
-  if (amount > player.balance + player.current_bet) {
-    abort EInvalidBet
-  };
+  assert!(amount <= player.balance + player.current_bet, EInvalidBet);
 
   let additional_amount = amount - player.current_bet;
   player.balance = player.balance - additional_amount;
@@ -470,19 +514,13 @@ public entry fun raise(game: &mut PokerGame, amount: u64, ctx: &mut TxContext) {
   let player_addr = ctx.sender();
 
   // For a raise, there should be a current bet and the raise should be at least min_bet
-  if (game.current_bet == 0) {
-    abort EInvalidAction
-  };
-  if (amount < game.current_bet + game.min_bet) {
-    abort EInvalidBet
-  };
+  assert!(game.current_bet > 0, EInvalidAction);
+  assert!(amount >= game.current_bet + game.min_bet, EInvalidBet);
 
-  let player = std::vector::borrow_mut(&mut game.players, player_index);
+  let player = game.players.borrow_mut(player_index);
 
   // Check if player has enough balance for raise
-  if (amount > player.balance + player.current_bet) {
-    abort EInvalidBet
-  };
+  assert!(amount <= player.balance + player.current_bet, EInvalidBet);
 
   let additional_amount = amount - player.current_bet;
   player.balance = player.balance - additional_amount;
@@ -529,19 +567,21 @@ entry fun generate_seed(r: &Random, ctx: &mut TxContext): vector<u8> {
   seed
 }
 
+/// Shuffle the deck of cards
 fun shuffle_deck(game: &mut PokerGame, seed: vector<u8>) {
-  let deck_size = vector::length(&game.deck);
+  let deck_size = game.deck.length();
   let hash = sui::hash::keccak256(&seed);
   let mut i = deck_size;
 
   while (i > 1) {
     i = i - 1;
-    let seed_byte = *vector::borrow(&hash, i % hash.length());
+    let seed_byte = *hash.borrow(i % hash.length());
     let j = ((seed_byte as u64) + i) % i;
     game.deck.swap(i, j);
   }
 }
 
+/// Deal cards to each player
 fun deal_player_cards(game: &mut PokerGame) {
   let player_count = game.players.length();
 
@@ -562,6 +602,7 @@ fun deal_player_cards(game: &mut PokerGame) {
   }
 }
 
+/// Collect blinds from players
 fun collect_blinds(game: &mut PokerGame) {
   let player_count = game.players.length();
 
@@ -596,6 +637,7 @@ fun collect_blinds(game: &mut PokerGame) {
   game.current_bet = bb_amount;
 }
 
+/// Find player index by address. Return invalid index if not found.
 fun find_player_index(game: &PokerGame, addr: address): u64 {
   let mut i = 0;
   let len = game.players.length();
@@ -785,8 +827,8 @@ fun create_side_pots(game: &mut PokerGame) {
   // Create side pots for each bet level
   let mut prev_level = 0u64;
   let mut level_idx = 0;
-  while (level_idx < vector::length(&bet_levels)) {
-    let current_level = *vector::borrow(&bet_levels, level_idx);
+  while (level_idx < bet_levels.length()) {
+    let current_level = *bet_levels.borrow(level_idx);
     let pot_contribution_per_player = current_level - prev_level;
 
     // Find eligible players for this pot level
@@ -801,8 +843,7 @@ fun create_side_pots(game: &mut PokerGame) {
     };
 
     // Calculate pot amount
-    let pot_amount =
-      pot_contribution_per_player * vector::length(&eligible_players);
+    let pot_amount = pot_contribution_per_player * eligible_players.length();
 
     if (pot_amount > 0) {
       let side_pot = SidePot {
@@ -819,13 +860,13 @@ fun create_side_pots(game: &mut PokerGame) {
 
 // Sort bet levels in ascending order
 fun sort_bet_levels(levels: &mut vector<u64>) {
-  let len = vector::length(levels);
+  let len = levels.length();
   let mut i = 0;
   while (i < len) {
     let mut j = i + 1;
     while (j < len) {
-      if (*vector::borrow(levels, i) > *vector::borrow(levels, j)) {
-        vector::swap(levels, i, j);
+      if (*levels.borrow(i) > *levels.borrow(j)) {
+        levels.swap(i, j);
       };
       j = j + 1;
     };
@@ -833,22 +874,16 @@ fun sort_bet_levels(levels: &mut vector<u64>) {
   };
 }
 
-// Rotate dealer position and reset for new hand
+/// Rotate dealer position and reset for new hand
 public entry fun start_new_hand(game: &mut PokerGame, ctx: &mut TxContext) {
   // Can only start new hand if current game is over
-  if (game.state != STATE_GAME_OVER) {
-    abort EInvalidGameState
-  };
+  assert!(game.state == STATE_GAME_OVER, EInvalidGameState);
 
   // Only owner can start new hand
-  if (ctx.sender() != game.owner) {
-    abort EInvalidPlayer
-  };
+  assert!(ctx.sender() == game.owner, EInvalidPlayer);
 
   let player_count = game.players.length();
-  if (player_count < MIN_PLAYERS) {
-    abort EInvalidPlayerCount
-  };
+  assert!(player_count >= MIN_PLAYERS, EInvalidPlayerCount);
 
   // Rotate dealer position
   game.dealer_position = (game.dealer_position + 1) % player_count;
@@ -881,7 +916,7 @@ public entry fun start_new_hand(game: &mut PokerGame, ctx: &mut TxContext) {
 
 // Simple shuffle without external randomness for new hands
 fun simple_shuffle_deck(game: &mut PokerGame) {
-  let deck_size = vector::length(&game.deck);
+  let deck_size = game.deck.length();
   let mut i = 0;
 
   // Simple deterministic shuffle based on dealer position
@@ -956,7 +991,7 @@ fun distribute_pot(game: &mut PokerGame) {
       let player = game.players.borrow(i);
       if (!player.is_folded) {
         let winner_addr = player.addr;
-        let pot_amount = balance::value(&game.pot);
+        let pot_amount = game.pot.value();
 
         winners.push_back(winner_addr);
         amounts.push_back(pot_amount);
@@ -974,15 +1009,15 @@ fun distribute_pot(game: &mut PokerGame) {
     create_side_pots(game);
 
     // Distribute each side pot
-    let pot_count = vector::length(&game.side_pots);
+    let pot_count = game.side_pots.length();
     let mut pot_idx = 0;
 
     while (pot_idx < pot_count) {
-      let side_pot = vector::borrow(&game.side_pots, pot_idx);
+      let side_pot = game.side_pots.borrow(pot_idx);
       let eligible_players = &side_pot.eligible_players;
       let pot_amount = side_pot.amount;
 
-      if (pot_amount == 0 || vector::length(eligible_players) == 0) {
+      if (pot_amount == 0 || eligible_players.length() == 0) {
         pot_idx = pot_idx + 1;
         continue
       };
@@ -992,8 +1027,8 @@ fun distribute_pot(game: &mut PokerGame) {
       let mut eligible_addresses = vector::empty<address>();
 
       let mut e = 0;
-      while (e < vector::length(eligible_players)) {
-        let player_idx = *vector::borrow(eligible_players, e);
+      while (e < eligible_players.length()) {
+        let player_idx = *eligible_players.borrow(e);
         let player = game.players.borrow(player_idx);
 
         if (!player.is_folded) {
@@ -1003,7 +1038,7 @@ fun distribute_pot(game: &mut PokerGame) {
           hand_cards.push_back(player.cards[1]);
 
           let mut j = 0;
-          while (j < vector::length(&game.community_cards)) {
+          while (j < game.community_cards.length()) {
             hand_cards.push_back(game.community_cards[j]);
             j = j + 1;
           };
@@ -1016,24 +1051,23 @@ fun distribute_pot(game: &mut PokerGame) {
       };
 
       // Find best hands among eligible players
-      let mut best_hand_indices = vector::empty<u64>();
+      let mut best_hand_indices: vector<u64> = vector[];
 
-      if (vector::length(&eligible_hands) > 0) {
+      if (eligible_hands.length() > 0) {
         // Start with first hand as best
         best_hand_indices.push_back(0);
 
         // Compare with remaining hands
         let mut k = 1;
-        while (k < vector::length(&eligible_hands)) {
-          let current_hand = vector::borrow(&eligible_hands, k);
-          let best_hand = vector::borrow(
-            &eligible_hands,
-            *vector::borrow(&best_hand_indices, 0),
+        while (k < eligible_hands.length()) {
+          let current_hand = eligible_hands.borrow(k);
+          let best_hand = eligible_hands.borrow(
+            *best_hand_indices.borrow(0),
           );
 
           if (compare_hands(current_hand, best_hand)) {
             // Current hand is better
-            best_hand_indices = vector::empty<u64>();
+            best_hand_indices = vector[];
             best_hand_indices.push_back(k);
           } else if (!compare_hands(best_hand, current_hand)) {
             // Tie
@@ -1045,26 +1079,23 @@ fun distribute_pot(game: &mut PokerGame) {
       };
 
       // Distribute this side pot among winners
-      let winner_count = vector::length(&best_hand_indices);
+      let winner_count = best_hand_indices.length();
       if (winner_count > 0) {
         let share = pot_amount / winner_count;
 
         let mut w = 0;
         while (w < winner_count) {
-          let hand_idx = *vector::borrow(&best_hand_indices, w);
-          let eligible_idx = *vector::borrow(eligible_players, hand_idx);
-          let winner_addr = *vector::borrow(&eligible_addresses, hand_idx);
+          let hand_idx = *best_hand_indices.borrow(w);
+          let eligible_idx = *eligible_players.borrow(hand_idx);
+          let winner_addr = *eligible_addresses.borrow(hand_idx);
 
           // Check if this winner is already in our winners list
           let mut found = false;
           let mut winners_idx = 0;
-          while (winners_idx < vector::length(&winners)) {
-            if (*vector::borrow(&winners, winners_idx) == winner_addr) {
+          while (winners_idx < winners.length()) {
+            if (*winners.borrow(winners_idx) == winner_addr) {
               // Add to existing amount
-              let current_amount = vector::borrow_mut(
-                &mut amounts,
-                winners_idx,
-              );
+              let current_amount = amounts.borrow_mut(winners_idx);
               *current_amount = *current_amount + share;
               found = true;
               break
@@ -1102,17 +1133,17 @@ fun distribute_pot(game: &mut PokerGame) {
 
 /// Evaluate a 7-card hand (5 community + 2 hole cards) and return the best 5-card hand
 fun evaluate_hand(cards: &vector<Card>): HandRank {
-  assert!(vector::length(cards) == 7, EInvalidHandSize);
+  assert!(cards.length() == 7, EInvalidHandSize);
 
   // Convert cards to ranks and suits for evaluation
-  let mut ranks = vector::empty<u8>();
-  let mut suits = vector::empty<u8>();
+  let mut ranks: vector<u8> = vector[];
+  let mut suits: vector<u8> = vector[];
 
   let mut i = 0;
   while (i < 7) {
-    let card = vector::borrow(cards, i);
-    vector::push_back(&mut ranks, card.value);
-    vector::push_back(&mut suits, card.suit);
+    let card = cards.borrow(i);
+    ranks.push_back(card.value);
+    suits.push_back(card.suit);
     i = i + 1;
   };
 
@@ -1133,7 +1164,7 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
       hand_type: HAND_ROYAL_FLUSH,
       primary_value: 14,
       secondary_value: 0,
-      kickers: vector::empty(),
+      kickers: vector[],
     }
   };
 
@@ -1143,7 +1174,7 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
       hand_type: HAND_STRAIGHT_FLUSH,
       primary_value: straight_high,
       secondary_value: 0,
-      kickers: vector::empty(),
+      kickers: vector[],
     }
   };
 
@@ -1169,7 +1200,7 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
       hand_type: HAND_FULL_HOUSE,
       primary_value: three_kind,
       secondary_value: pair_value,
-      kickers: vector::empty(),
+      kickers: vector[],
     }
   };
 
@@ -1178,7 +1209,7 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
     let flush_kickers = get_flush_kickers(&ranks, &suits, flush_suit);
     return HandRank {
       hand_type: HAND_FLUSH,
-      primary_value: *vector::borrow(&flush_kickers, 0),
+      primary_value: *flush_kickers.borrow(0),
       secondary_value: 0,
       kickers: flush_kickers,
     }
@@ -1190,7 +1221,7 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
       hand_type: HAND_STRAIGHT,
       primary_value: straight_high,
       secondary_value: 0,
-      kickers: vector::empty(),
+      kickers: vector[],
     }
   };
 
@@ -1207,9 +1238,9 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
 
   // Check for two pair
   let pairs = find_pairs(&rank_counts);
-  if (vector::length(&pairs) >= 2) {
-    let high_pair = *vector::borrow(&pairs, 0);
-    let low_pair = *vector::borrow(&pairs, 1);
+  if (pairs.length() >= 2) {
+    let high_pair = *pairs.borrow(0);
+    let low_pair = *pairs.borrow(1);
     let kicker = find_highest_kicker(&ranks, high_pair, 1);
     let kicker2 = find_highest_kicker(&ranks, low_pair, 1);
     let final_kicker = if (kicker != low_pair && kicker != high_pair) kicker
@@ -1224,8 +1255,8 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
   };
 
   // Check for one pair
-  if (vector::length(&pairs) == 1) {
-    let pair_rank = *vector::borrow(&pairs, 0);
+  if (pairs.length() == 1) {
+    let pair_rank = *pairs.borrow(0);
     let kickers = find_kickers(&ranks, pair_rank, 3);
     return HandRank {
       hand_type: HAND_ONE_PAIR,
@@ -1239,7 +1270,7 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
   let kickers = get_high_card_kickers(&ranks);
   HandRank {
     hand_type: HAND_HIGH_CARD,
-    primary_value: *vector::borrow(&kickers, 0),
+    primary_value: *kickers.borrow(0),
     secondary_value: 0,
     kickers,
   }
@@ -1270,13 +1301,13 @@ fun compare_hands(hand1: &HandRank, hand2: &HandRank): bool {
 
 /// Sort ranks in descending order (highest first)
 fun sort_ranks(ranks: &mut vector<u8>) {
-  let len = vector::length(ranks);
+  let len = ranks.length();
   let mut i = 0;
   while (i < len) {
     let mut j = i + 1;
     while (j < len) {
-      if (*vector::borrow(ranks, i) < *vector::borrow(ranks, j)) {
-        vector::swap(ranks, i, j);
+      if (*ranks.borrow(i) < *ranks.borrow(j)) {
+        ranks.swap(i, j);
       };
       j = j + 1;
     };
@@ -1289,16 +1320,16 @@ fun check_flush(suits: &vector<u8>): u8 {
   let mut suit_counts = vector[0u8, 0u8, 0u8, 0u8]; // Hearts, Diamonds, Clubs, Spades
 
   let mut i = 0;
-  while (i < vector::length(suits)) {
-    let suit = *vector::borrow(suits, i);
-    let current_count = *vector::borrow(&suit_counts, (suit as u64));
-    *vector::borrow_mut(&mut suit_counts, (suit as u64)) = current_count + 1;
+  while (i < suits.length()) {
+    let suit = *suits.borrow(i);
+    let current_count = *suit_counts.borrow(suit as u64);
+    *suit_counts.borrow_mut(suit as u64) = current_count + 1;
     i = i + 1;
   };
 
   i = 0;
   while (i < 4) {
-    if (*vector::borrow(&suit_counts, i) >= 5) {
+    if (*suit_counts.borrow(i) >= 5) {
       return (i as u8)
     };
     i = i + 1;
@@ -1312,10 +1343,10 @@ fun check_straight(ranks: &vector<u8>): u8 {
   // Remove duplicates and sort
   let mut unique_ranks = vector::empty<u8>();
   let mut i = 0;
-  while (i < vector::length(ranks)) {
-    let rank = *vector::borrow(ranks, i);
-    if (!vector::contains(&unique_ranks, &rank)) {
-      vector::push_back(&mut unique_ranks, rank);
+  while (i < ranks.length()) {
+    let rank = *ranks.borrow(i);
+    if (!unique_ranks.contains(&rank)) {
+      unique_ranks.push_back(rank);
     };
     i = i + 1;
   };
@@ -1323,7 +1354,7 @@ fun check_straight(ranks: &vector<u8>): u8 {
   sort_ranks(&mut unique_ranks);
 
   // Check for 5 consecutive cards
-  let unique_length = vector::length(&unique_ranks);
+  let unique_length = unique_ranks.length();
   if (unique_length < 5) {
     return 0 // Not enough unique ranks for a straight
   };
@@ -1333,8 +1364,8 @@ fun check_straight(ranks: &vector<u8>): u8 {
     let mut consecutive = true;
     let mut j = 0;
     while (j < 4) {
-      let current_rank = *vector::borrow(&unique_ranks, i + j);
-      let next_rank = *vector::borrow(&unique_ranks, i + j + 1);
+      let current_rank = *unique_ranks.borrow(i + j);
+      let next_rank = *unique_ranks.borrow(i + j + 1);
       if (current_rank != next_rank + 1) {
         consecutive = false;
         break
@@ -1343,18 +1374,18 @@ fun check_straight(ranks: &vector<u8>): u8 {
     };
 
     if (consecutive) {
-      return *vector::borrow(&unique_ranks, i) // Return high card of straight
+      return *unique_ranks.borrow(i) // Return high card of straight
     };
     i = i + 1;
   };
 
   // Check for A-2-3-4-5 straight (wheel)
-  if (vector::length(&unique_ranks) >= 5) {
-    let has_ace = vector::contains(&unique_ranks, &14);
-    let has_five = vector::contains(&unique_ranks, &5);
-    let has_four = vector::contains(&unique_ranks, &4);
-    let has_three = vector::contains(&unique_ranks, &3);
-    let has_two = vector::contains(&unique_ranks, &2);
+  if (unique_ranks.length() >= 5) {
+    let has_ace = unique_ranks.contains(&14);
+    let has_five = unique_ranks.contains(&5);
+    let has_four = unique_ranks.contains(&4);
+    let has_three = unique_ranks.contains(&3);
+    let has_two = unique_ranks.contains(&2);
 
     if (has_ace && has_five && has_four && has_three && has_two) {
       return 5 // 5-high straight
@@ -1366,18 +1397,18 @@ fun check_straight(ranks: &vector<u8>): u8 {
 
 /// Count frequency of each rank
 fun count_ranks(ranks: &vector<u8>): vector<u8> {
-  let mut counts = vector::empty<u8>();
+  let mut counts: vector<u8> = vector[];
   let mut i = 0;
   while (i < 15) {
-    vector::push_back(&mut counts, 0);
+    counts.push_back(0);
     i = i + 1;
   };
 
   i = 0;
-  while (i < vector::length(ranks)) {
-    let rank = *vector::borrow(ranks, i);
-    let current_count = *vector::borrow(&counts, (rank as u64));
-    *vector::borrow_mut(&mut counts, (rank as u64)) = current_count + 1;
+  while (i < ranks.length()) {
+    let rank = *ranks.borrow(i);
+    let current_count = *counts.borrow(rank as u64);
+    *counts.borrow_mut(rank as u64) = current_count + 1;
     i = i + 1;
   };
 
@@ -1388,7 +1419,7 @@ fun count_ranks(ranks: &vector<u8>): vector<u8> {
 fun find_four_of_a_kind(rank_counts: &vector<u8>): u8 {
   let mut i = 14;
   while (i >= 2) {
-    if (*vector::borrow(rank_counts, i) == 4) {
+    if (*rank_counts.borrow(i) == 4) {
       return (i as u8)
     };
     i = i - 1;
@@ -1404,7 +1435,7 @@ fun find_full_house(rank_counts: &vector<u8>): (u8, u8) {
   // Find three of a kind (highest)
   let mut i = 14;
   while (i >= 2) {
-    if (*vector::borrow(rank_counts, i) == 3) {
+    if (*rank_counts.borrow(i) == 3) {
       three_kind = (i as u8);
       break
     };
@@ -1414,7 +1445,7 @@ fun find_full_house(rank_counts: &vector<u8>): (u8, u8) {
   // Find pair (highest, different from three of a kind)
   i = 14;
   while (i >= 2) {
-    let count = *vector::borrow(rank_counts, i);
+    let count = *rank_counts.borrow(i);
     if (
       (count == 2 || (count == 3 && (i as u8) != three_kind)) && (i as u8) != three_kind
     ) {
@@ -1429,16 +1460,16 @@ fun find_full_house(rank_counts: &vector<u8>): (u8, u8) {
 
 /// Find pairs in descending order
 fun find_pairs(rank_counts: &vector<u8>): vector<u8> {
-  let mut pairs = vector::empty<u8>();
+  let mut pairs: vector<u8> = vector[];
 
   let mut i = 14;
   while (i >= 2) {
-    let count = *vector::borrow(rank_counts, i);
+    let count = *rank_counts.borrow(i);
     if (count == 2) {
-      vector::push_back(&mut pairs, (i as u8));
+      pairs.push_back(i as u8);
     } else if (count == 3) {
       // Three of a kind counts as a pair for full house detection
-      vector::push_back(&mut pairs, (i as u8));
+      pairs.push_back(i as u8);
     };
     i = i - 1;
   };
@@ -1449,8 +1480,8 @@ fun find_pairs(rank_counts: &vector<u8>): vector<u8> {
 /// Find the highest kicker excluding specified rank
 fun find_highest_kicker(ranks: &vector<u8>, exclude_rank: u8, count: u8): u8 {
   let kickers = find_kickers(ranks, exclude_rank, count);
-  if (vector::length(&kickers) > 0) {
-    *vector::borrow(&kickers, 0)
+  if (kickers.length() > 0) {
+    *kickers.borrow(0)
   } else {
     0
   }
@@ -1458,15 +1489,15 @@ fun find_highest_kicker(ranks: &vector<u8>, exclude_rank: u8, count: u8): u8 {
 
 /// Find kickers (cards not part of the main hand)
 fun find_kickers(ranks: &vector<u8>, exclude_rank: u8, count: u8): vector<u8> {
-  let mut kickers = vector::empty<u8>();
+  let mut kickers: vector<u8> = vector[];
 
   // Collect unused ranks in descending order
   let mut i = 0;
   let target_count = (count as u64);
-  while (i < vector::length(ranks) && vector::length(&kickers) < target_count) {
-    let rank = *vector::borrow(ranks, i);
+  while (i < ranks.length() && kickers.length() < target_count) {
+    let rank = *ranks.borrow(i);
     if (rank != exclude_rank) {
-      vector::push_back(&mut kickers, rank);
+      kickers.push_back(rank);
     };
     i = i + 1;
   };
@@ -1483,9 +1514,9 @@ fun get_flush_kickers(
   let mut flush_cards = vector::empty<u8>();
 
   let mut i = 0;
-  while (i < vector::length(suits)) {
-    if (*vector::borrow(suits, i) == flush_suit) {
-      vector::push_back(&mut flush_cards, *vector::borrow(ranks, i));
+  while (i < suits.length()) {
+    if (*suits.borrow(i) == flush_suit) {
+      flush_cards.push_back(*ranks.borrow(i));
     };
     i = i + 1;
   };
@@ -1495,8 +1526,8 @@ fun get_flush_kickers(
   // Take top 5 cards
   let mut kickers = vector::empty<u8>();
   i = 0;
-  while (i < 5 && i < vector::length(&flush_cards)) {
-    vector::push_back(&mut kickers, *vector::borrow(&flush_cards, i));
+  while (i < 5 && i < flush_cards.length()) {
+    kickers.push_back(*flush_cards.borrow(i));
     i = i + 1;
   };
 
@@ -1505,14 +1536,14 @@ fun get_flush_kickers(
 
 /// Get high card kickers (5 highest cards)
 fun get_high_card_kickers(ranks: &vector<u8>): vector<u8> {
-  let mut unique_ranks = vector::empty<u8>();
+  let mut unique_ranks: vector<u8> = vector[];
 
   // Get unique ranks
   let mut i = 0;
-  while (i < vector::length(ranks)) {
-    let rank = *vector::borrow(ranks, i);
-    if (!vector::contains(&unique_ranks, &rank)) {
-      vector::push_back(&mut unique_ranks, rank);
+  while (i < ranks.length()) {
+    let rank = *ranks.borrow(i);
+    if (!unique_ranks.contains(&rank)) {
+      unique_ranks.push_back(rank);
     };
     i = i + 1;
   };
@@ -1522,8 +1553,8 @@ fun get_high_card_kickers(ranks: &vector<u8>): vector<u8> {
   // Take top 5
   let mut kickers = vector::empty<u8>();
   i = 0;
-  while (i < 5 && i < vector::length(&unique_ranks)) {
-    vector::push_back(&mut kickers, *vector::borrow(&unique_ranks, i));
+  while (i < 5 && i < unique_ranks.length()) {
+    kickers.push_back(*unique_ranks.borrow(i));
     i = i + 1;
   };
 
@@ -1532,11 +1563,11 @@ fun get_high_card_kickers(ranks: &vector<u8>): vector<u8> {
 
 /// Compare kickers arrays
 fun compare_kickers(kickers1: &vector<u8>, kickers2: &vector<u8>): bool {
-  let len = vector::length(kickers1);
+  let len = kickers1.length();
   let mut i = 0;
-  while (i < len && i < vector::length(kickers2)) {
-    let k1 = *vector::borrow(kickers1, i);
-    let k2 = *vector::borrow(kickers2, i);
+  while (i < len && i < kickers2.length()) {
+    let k1 = *kickers1.borrow(i);
+    let k2 = *kickers2.borrow(i);
     if (k1 != k2) {
       return k1 > k2
     };
