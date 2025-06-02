@@ -38,13 +38,15 @@ public enum PlayerAction has copy, drop {
 }
 
 // Game states
-const STATE_WAITING_FOR_PLAYERS: u8 = 0;
-const STATE_PRE_FLOP: u8 = 2;
-const STATE_FLOP: u8 = 3;
-const STATE_TURN: u8 = 4;
-const STATE_RIVER: u8 = 5;
-const STATE_SHOWDOWN: u8 = 6;
-const STATE_GAME_OVER: u8 = 7;
+public enum GameStage has copy, drop, store {
+  Waiting,
+  PreFlop,
+  Flop,
+  Turn,
+  River,
+  Showdown,
+  Ended,
+}
 
 // Hand ranking constants
 const HAND_HIGH_CARD: u8 = 0;
@@ -119,10 +121,10 @@ public struct PokerGame has key {
   current_bet: u64,
   /// Current game hand dealer position (index in players vector)
   dealer_position: u64,
-  /// Current player  index in players vector that are in turn to act
+  /// The player index that currently in turn to act
   current_player: u64,
-  /// Current game state
-  state: u8,
+  /// Current game stage
+  stage: GameStage,
   /// Last player position that raised the bet in this round
   last_raise_position: u64,
   // ================ Game Configuration ================
@@ -164,7 +166,7 @@ public struct PlayerMoved has copy, drop {
 
 public struct RoundChanged has copy, drop {
   game_id: ID,
-  new_state: u8,
+  new_state: GameStage,
 }
 
 public struct GameEnded has copy, drop {
@@ -183,32 +185,6 @@ public struct PlayerWithdrawn has copy, drop {
   balance: u64,
 }
 
-// ===== Accessors =====
-
-public fun get_state(game: &PokerGame): u8 { game.state }
-
-public fun get_buy_in(game: &PokerGame): u64 { game.buy_in }
-
-public fun get_dealer_position(game: &PokerGame): u64 { game.dealer_position }
-
-public fun get_treasury_balance(game: &PokerGame): u64 { game.treasury.value() }
-
-public fun get_side_pots_count(game: &PokerGame): u64 {
-  game.side_pots.length()
-}
-
-public fun get_player_balance(game: &PokerGame, player: address): u64 {
-  let player_index = find_player_index(game, player);
-  game.players.borrow(player_index).balance
-}
-
-// Alias for accessors
-public use fun get_state as PokerGame.state;
-public use fun get_buy_in as PokerGame.buy_in;
-public use fun get_dealer_position as PokerGame.dealer_position;
-public use fun get_treasury_balance as PokerGame.treasury_balance;
-public use fun get_player_balance as PokerGame.player_balance;
-public use fun get_side_pots_count as PokerGame.side_pots_count;
 // ===== Game Functions =====
 
 /// Create a new poker game
@@ -240,12 +216,12 @@ public entry fun create(payment: Coin<SUI>, ctx: &mut TxContext): ID {
     players: vector[first_player],
     deck: vector[],
     community_cards: vector[],
-    pot: 0,
     side_pots: vector[],
+    pot: 0,
     current_bet: 0,
+    stage: GameStage::Waiting,
     dealer_position: 0,
     current_player: 0,
-    state: STATE_WAITING_FOR_PLAYERS,
     last_raise_position: 0,
     // ===== Game Configuration =====
     buy_in,
@@ -271,7 +247,7 @@ public entry fun join(
   ctx: &mut TxContext,
 ) {
   let player_addr = ctx.sender();
-  assert!(game.state == STATE_WAITING_FOR_PLAYERS, EGameInProgress);
+  assert!(game.stage == GameStage::Waiting, EGameInProgress);
   assert!(game.players.length() < MAX_PLAYERS, EGameFulled);
   assert!(payment.value() == game.buy_in, EBuyInMismatch);
   assert!(game.players.all!(|p| p.addr != player_addr), EAlreadyJoined);
@@ -297,7 +273,7 @@ public entry fun cancel_game(game: PokerGame, ctx: &mut TxContext) {
   assert!(ctx.sender() == game.owner, EInvalidPlayer);
 
   // Check if game is still waiting for players
-  assert!(game.state == STATE_WAITING_FOR_PLAYERS, EInvalidGameState);
+  assert!(game.stage == GameStage::Waiting, EInvalidGameState);
 
   let PokerGame { id, mut treasury, players, .. } = game;
   players.do!(|player| {
@@ -330,7 +306,7 @@ public entry fun start_game_with_seed_for_testing(
   start_game_with_seed(game, seed, ctx);
 }
 
-entry fun start_game_with_seed(
+fun start_game_with_seed(
   game: &mut PokerGame,
   seed: vector<u8>,
   ctx: &TxContext,
@@ -343,7 +319,7 @@ entry fun start_game_with_seed(
   );
 
   assert!(seed.length() == SEED_LENGTH, EInvalidSeed);
-  assert!(game.state == STATE_WAITING_FOR_PLAYERS, EInvalidGameState);
+  assert!(game.stage == GameStage::Waiting, EInvalidGameState);
 
   // Only owner can start the game
   assert!(ctx.sender() == game.owner, EInvalidPlayer);
@@ -351,10 +327,15 @@ entry fun start_game_with_seed(
   initialize_deck(game);
   shuffle_deck(game, seed);
   deal_player_cards(game);
+  if (game.hand_played > 0) {
+    game.dealer_position = (game.dealer_position + 1) % player_count; // Move dealer position to next player
+    game.last_raise_position = (game.dealer_position + 3) % player_count; // Last raiser is the big blind
+    game.current_player = (game.dealer_position + 3) % player_count; // Next player to act is after big blind
+  };
   set_blinds(game);
 
   // Update game state
-  game.state = STATE_PRE_FLOP;
+  game.stage = GameStage::PreFlop;
 
   // Set current player (after big blind)
   game.current_player = (game.dealer_position + 3) % player_count;
@@ -363,14 +344,14 @@ entry fun start_game_with_seed(
   // Emit event
   let game_id = game.id.to_inner();
   emit(GameStarted { game_id, num_players: player_count });
-  emit(RoundChanged { game_id, new_state: game.state });
+  emit(RoundChanged { game_id, new_state: game.stage });
 }
 
 // ===== Player Actions =====
 
 /// Withdraw balance from the game
 entry fun withdraw(game: &mut PokerGame, ctx: &mut TxContext) {
-  assert!(game.state == STATE_GAME_OVER, EInvalidGameState); // Game must be over to claim pot
+  assert!(game.stage == GameStage::Ended, EInvalidGameState); // Game must be over to claim pot
   let player_addr = ctx.sender();
   let player_index = find_player_index(game, player_addr);
   let player = game.players.borrow_mut(player_index);
@@ -413,6 +394,18 @@ public entry fun bet_or_raise(
 
 // ===== Helper Functions =====
 
+entry fun generate_seed(r: &Random, ctx: &mut TxContext): vector<u8> {
+  let mut generator = new_generator(r, ctx);
+  let mut seed = vector[];
+  let mut i = 0;
+  while (i < SEED_LENGTH) {
+    let byte = generator.generate_u8();
+    seed.push_back(byte);
+    i = i + 1;
+  };
+  seed
+}
+
 fun initialize_deck(game: &mut PokerGame) {
   // Clear the deck first
   game.deck = vector[];
@@ -428,18 +421,6 @@ fun initialize_deck(game: &mut PokerGame) {
     };
     suit = suit + 1;
   }
-}
-
-entry fun generate_seed(r: &Random, ctx: &mut TxContext): vector<u8> {
-  let mut generator = new_generator(r, ctx);
-  let mut seed = vector[];
-  let mut i = 0;
-  while (i < SEED_LENGTH) {
-    let byte = generator.generate_u8();
-    seed.push_back(byte);
-    i = i + 1;
-  };
-  seed
 }
 
 /// Shuffle the deck of cards
@@ -514,8 +495,6 @@ fun set_blinds(game: &mut PokerGame) {
   // Update related game state
   game.pot = sb_amount + bb_amount; // Reset pot to 0 and add blinds
   game.current_bet = bb_amount; // Set current bet to big blind amount
-  game.last_raise_position = bb_pos; // Last raiser is the big blind
-  game.current_player = (bb_pos + 1) % game.players.length(); // Next player to act is after big blind
 }
 
 /// Find player index by address. Abort with `EInvalidPlayer` if not found.
@@ -531,8 +510,8 @@ fun find_player_index(game: &PokerGame, addr: address): u64 {
 
 /// Check if the player can take action or not.
 fun can_act(game: &PokerGame, player_index: u64): bool {
-  game.state >= STATE_PRE_FLOP &&
-  game.state <= STATE_RIVER &&
+  game.stage != GameStage::Waiting &&
+  game.stage != GameStage::Ended &&
   game.current_player == player_index &&
   game.players.borrow(player_index).is_folded == false
 }
@@ -641,7 +620,7 @@ fun is_round_complete(game: &PokerGame): bool {
   // All active players have matched the bet
   // Now check if we've completed a betting cycle
 
-  if (game.state == STATE_PRE_FLOP) {
+  if (game.stage == GameStage::PreFlop) {
     // Pre-flop: round is complete when current player has cycled back
     // to the player after the big blind (first to act)
     let first_to_act_preflop = (game.dealer_position + 3) % player_count;
@@ -679,27 +658,27 @@ fun advance_game_state(game: &mut PokerGame) {
   // Check if only one player remains
   if (count_active_players(game) == 1) {
     // Game over - one winner
-    game.state = STATE_GAME_OVER;
+    game.stage = GameStage::Ended;
     distribute_pot(game);
     return
   };
 
   // Otherwise, advance to next stage
-  if (game.state == STATE_PRE_FLOP) {
+  if (game.stage == GameStage::PreFlop) {
     // Deal the flop (3 community cards)
     deal_community_cards(game, 3);
-    game.state = STATE_FLOP;
-  } else if (game.state == STATE_FLOP) {
+    game.stage = GameStage::Flop;
+  } else if (game.stage == GameStage::Flop) {
     // Deal the turn (1 community card)
     deal_community_cards(game, 1);
-    game.state = STATE_TURN;
-  } else if (game.state == STATE_TURN) {
+    game.stage = GameStage::Turn;
+  } else if (game.stage == GameStage::Turn) {
     // Deal the river (1 community card)
     deal_community_cards(game, 1);
-    game.state = STATE_RIVER;
-  } else if (game.state == STATE_RIVER) {
+    game.stage = GameStage::River;
+  } else if (game.stage == GameStage::River) {
     // Showdown
-    game.state = STATE_SHOWDOWN;
+    game.stage = GameStage::Showdown;
     distribute_pot(game);
     return
   };
@@ -724,7 +703,7 @@ fun advance_game_state(game: &mut PokerGame) {
     game.current_player = (game.current_player + 1) % player_count;
   };
 
-  emit(RoundChanged { game_id, new_state: game.state });
+  emit(RoundChanged { game_id, new_state: game.stage });
 }
 
 fun reset_player_bets(game: &mut PokerGame) {
@@ -984,7 +963,7 @@ fun distribute_pot(game: &mut PokerGame) {
   emit(GameEnded { game_id, winners, amounts });
 
   // Set game state to game over
-  game.state = STATE_GAME_OVER;
+  game.stage = GameStage::Ended;
 }
 
 // ===== Hand Evaluation Functions =====
@@ -1432,4 +1411,31 @@ fun compare_kickers(kickers1: &vector<u8>, kickers2: &vector<u8>): bool {
     i = i + 1;
   };
   false // Tie
+}
+
+// ===== Accessors (Tests Only) =====
+
+#[test_only]
+public fun is_ended(game: &PokerGame): bool {
+  game.stage == GameStage::Ended
+}
+
+#[test_only]
+public fun buy_in(game: &PokerGame): u64 { game.buy_in }
+
+#[test_only]
+public fun dealer_position(game: &PokerGame): u64 { game.dealer_position }
+
+#[test_only]
+public fun treasury_balance(game: &PokerGame): u64 { game.treasury.value() }
+
+#[test_only]
+public fun side_pots_count(game: &PokerGame): u64 {
+  game.side_pots.length()
+}
+
+#[test_only]
+public fun get_player_balance(game: &PokerGame, player: address): u64 {
+  let player_index = find_player_index(game, player);
+  game.players.borrow(player_index).balance
 }

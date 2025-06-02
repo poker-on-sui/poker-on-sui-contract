@@ -19,30 +19,23 @@ const PLAYER3: address = @0x3333;
 const PLAYER4: address = @0x4444;
 
 // Game configuration constants
-const BUY_IN: u64 = 1_000_000_000; // 1 SUI
+const BUY_IN: u64 = 1_000_000_000; // 0.1 SUI
+const MIN_BUY_IN: u64 = 100_000_000; // 0.1 SUI
 const MIN_BET: u64 = 50_000_000; // 5% of buy_in
 
 // Error codes from the poker module (only keeping used ones for warnings)
 // const EGameInProgress: u64 = 0x0000;
 // const EInvalidPlayerCount: u64 = 0x0001;
 const EInsufficientBuyIn: u64 = 0x0002;
+const EBuyInMismatch: u64 = 0x0003;
 const EInvalidPlayer: u64 = 0x0004;
 const EInvalidAction: u64 = 0x0005;
-// const EInvalidBet: u64 = 0x0006;
-// const ENotYourTurn: u64 = 0x0007;
+// const EInvalidAmount: u64 = 0x0006;
 const EAlreadyJoined: u64 = 0x0009;
 const EInvalidSeed: u64 = 0x000A;
 const EInvalidGameState: u64 = 0x000B;
 // const EInvalidHandSize: u64 = 0x000C;
-
-// Game states from the poker module
-// const STATE_WAITING_FOR_PLAYERS: u8 = 0;
-// const STATE_PRE_FLOP: u8 = 2;
-// const STATE_FLOP: u8 = 3;
-// const STATE_TURN: u8 = 4;
-// const STATE_RIVER: u8 = 5;
-// const STATE_SHOWDOWN: u8 = 6;
-const STATE_GAME_OVER: u8 = 7;
+// const EGameFulled: u64 = 0x000D;
 
 // ===== Alias for Scenario =====
 
@@ -55,11 +48,22 @@ use fun tests_utils::raise_as as ts::Scenario.raise_as;
 use fun tests_utils::withdraw_as as ts::Scenario.withdraw_as;
 use fun tests_utils::act_as as ts::Scenario.act_as;
 use fun tests_utils::inspect_as as ts::Scenario.inspect_as;
-
 // ===== Game tests =====
 
 #[test]
 #[expected_failure(abort_code = EInsufficientBuyIn, location = game)]
+fun test_create_game_with_insufficient_buy_in() {
+  let mut scenario = ts::begin(PLAYER0);
+
+  // Player tries to create a game with insufficient funds
+  let coin = mint_for_testing<SUI>(MIN_BUY_IN - 1, scenario.ctx());
+  game::create(coin, scenario.ctx());
+
+  ts::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = EBuyInMismatch, location = game)]
 fun test_join_game_insufficient_buy_in() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
@@ -192,7 +196,7 @@ fun test_full_game_flow() {
 
   scenario.inspect_as!(PLAYER0, |game| {
     // Check game state after all actions
-    assert_eq(game.state(), STATE_GAME_OVER);
+    assert!(game.is_ended()); // Game should be over
     assert_eq(game.treasury_balance(), BUY_IN * 3); // Total pot should be 3x buy-in
     debug::print(game);
     let player0_balance = game.get_player_balance(PLAYER0);
@@ -555,7 +559,7 @@ fun test_withdraw_no_winnings() {
 
   // Since all players is now all-in, game should ended with PLAYER0 OR PLAYER01 winning
   scenario.inspect_as!(PLAYER0, |game| {
-    assert_eq(game.state(), STATE_GAME_OVER);
+    assert!(game.is_ended());
   });
 
   // Try to withdraw with losing player (should fail)
