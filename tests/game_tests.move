@@ -198,7 +198,6 @@ fun test_full_game_flow() {
     // Check game state after all actions
     assert!(game.is_ended()); // Game should be over
     assert_eq(game.treasury_balance(), BUY_IN * 3); // Total pot should be 3x buy-in
-    debug::print(game);
     let player0_balance = game.get_player_balance(PLAYER0);
     let player1_balance = game.get_player_balance(PLAYER1);
     let player2_balance = game.get_player_balance(PLAYER2);
