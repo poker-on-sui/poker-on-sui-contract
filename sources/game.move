@@ -584,64 +584,46 @@ fun player_act(
     action: *action,
   });
 
-  // ====== Check if round is complete =====
-
-  // No more waiting players, and no one betted
-  let is_no_one_bet =
-    game.last_raise_position.is_none() 
-    && game.players.all!(|p| p.state != PlayerState::Waiting);
-  // All players have either acted, and all players who doesn't fold or all-in should have the same bet as current bet
-  let is_all_called =
-    game.last_raise_position.is_some() 
-    && game.players.all!(|p| p.is_acted())
-    && game.players.filter!(|p| p.is_acted() && p.state != PlayerState::Folded && p.state != PlayerState::AllIn).all!(|p| p.current_bet == game.current_bet);
-  let is_last_standing =
-    game.players.count!(|p| p.state != PlayerState::Folded || p.state != PlayerState::AllIn) <= 1; // Only one player left who hasn't folded or gone all-in
-
-  if (is_no_one_bet || is_all_called || is_last_standing) {
-    // Round is complete, calculate game and advance game stage
-    check_and_create_side_pots(game);
-    calculate_game_stage(game);
-  } else {
+  // ====== Move to the next player =====
+  {
     // Continue the round, make the next player active
     let mut next_player = (player_index + 1) % game.players.length();
     let mut i = 0;
     while (i < game.players.length()) {
       let next_player_state = game.players.borrow(next_player).state;
-      if (next_player_state == PlayerState::Waiting) { break; }; // Found next waiting player
+      if (next_player_state == PlayerState::Waiting) { break }; // Found next waiting player
       next_player = (next_player + 1) % game.players.length(); // Move to next player
       i = i + 1;
     };
     game.players.borrow_mut(next_player).state = PlayerState::Active; // Set next player to active
-  }
-}
+  };
 
-fun is_acted(player: &Player): bool {
-  // Check if player has moved, folded, or gone all-in
-  player.state == PlayerState::Folded ||
-  player.state == PlayerState::Checked ||
-  player.state == PlayerState::Called ||
-  player.state == PlayerState::RaisedOrBetted ||
-  player.state == PlayerState::AllIn
+  // ====== Check if round is complete =====
+  if (
+    is_all_folded(&game.players) || // This also ended the hand
+    is_all_checked(&game.players) || // All players checked, proceed to next stage
+    is_all_called(&game.players) // All players called the current bet, proceed to next stage
+  ) {
+    // Round is complete, calculate game and advance game stage
+    check_and_create_side_pots(game);
+    calculate_game_stage(game);
+  }
 }
 
 /// Calculate the game stage after a round ended.
 fun calculate_game_stage(game: &mut PokerGame) {
   // The round is complete if all players have either moved, folded, or gone all-in.
 
-  // ====== Check if the game ended ======
-
-  let unfolded_count = game.players.count!(|p| p.state != PlayerState::Folded);
-  let all_in_count = game.players.count!(|p| p.state == PlayerState::AllIn);
+  // ====== Check if the hand ended ======
   if (
-    game.stage == GameStage::River || // players finished betting on the river
-    unfolded_count <= 1 ||  // Only one player left who hasn't folded
-    unfolded_count - all_in_count <= 1 // All but one player are all-in (no more betting possible)
+    is_all_folded(&game.players) ||
+    game.stage == GameStage::River // players finished betting on the river
   ) {
     // Game ended, process players' hands and distribute pot
     process_players_hands(game);
     distribute_pot(game);
     game.stage = GameStage::Ended;
+    game.hand_played = game.hand_played + 1; // Increment hands played
     emit(GameEnded { game_id: game.id.to_inner() });
     return
   };
@@ -668,13 +650,14 @@ fun calculate_game_stage(game: &mut PokerGame) {
   };
 
   // ===== Prepare for the next round =====
+
   game.players.do_mut!(|p| {
     p.state = PlayerState::Waiting; // Reset active players to waiting state
     p.current_bet = 0; // Reset current bet for next round
   });
-  game.dealer_position = (game.dealer_position + 1) % game.players.length(); // Move dealer position to next player
   let active_pos = (game.dealer_position + 1) % game.players.length(); // First player to act is small blind
   game.players.borrow_mut(active_pos).state = PlayerState::Active; // Set small blind player to active
+  game.last_raise_position = option::none(); // Reset last raise position
 
   emit(RoundChanged { game_id: game.id.to_inner(), new_state: game.stage });
 }
@@ -811,6 +794,23 @@ fun distribute_pot(game: &mut PokerGame) {
     });
     assert!(game.side_pots.all!(|sp| sp.amount == 0), EInvalidAction); // All side pots should be empty after distribution
   };
+}
+
+// ===== Game status check =====
+fun is_all_folded(players: &vector<Player>): bool {
+  // Check if all players have folded
+  players.count!(|p| p.state != PlayerState::Folded && p.state != PlayerState::AllIn) <= 1
+}
+
+fun is_all_checked(players: &vector<Player>): bool {
+  // Check if all players have checked
+  players.count!(|p| p.state != PlayerState::Checked && p.state != PlayerState::AllIn) <= 1
+}
+
+fun is_all_called(players: &vector<Player>): bool {
+  // Check if all players have called the current bet
+  players
+    .count!(|p| p.state != PlayerState::Called && p.state != PlayerState::AllIn) <= 1
 }
 
 // ===== Hand Evaluation Functions =====
