@@ -595,8 +595,10 @@ fun player_act(
     game.last_raise_position.is_some() 
     && game.players.all!(|p| p.is_acted())
     && game.players.filter!(|p| p.is_acted() && p.state != PlayerState::Folded && p.state != PlayerState::AllIn).all!(|p| p.current_bet == game.current_bet);
+  let is_last_standing =
+    game.players.count!(|p| p.state != PlayerState::Folded || p.state != PlayerState::AllIn) <= 1; // Only one player left who hasn't folded or gone all-in
 
-  if (is_no_one_bet || is_all_called) {
+  if (is_no_one_bet || is_all_called || is_last_standing) {
     // Round is complete, calculate game and advance game stage
     check_and_create_side_pots(game);
     calculate_game_stage(game);

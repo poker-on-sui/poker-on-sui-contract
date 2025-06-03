@@ -3,13 +3,12 @@ module poker::tests_utils;
 
 use poker::game::{Self, PokerGame};
 use sui::coin::mint_for_testing;
-use sui::random::new_generator_for_testing;
 use sui::sui::SUI;
 use sui::test_scenario::{Self as ts, Scenario};
 
 // Game configuration constants
 const BUY_IN: u64 = 1_000_000_000; // 1 SUI
-const SEED_LENGTH: u64 = 32;
+// const SEED_LENGTH: u64 = 32;
 
 /// Creates a new poker game and returns a test scenario with the creator automatically joined
 public fun create_and_join_game_as(player: address): Scenario {
@@ -102,13 +101,38 @@ public fun withdraw_as(scenario: &mut Scenario, player: address) {
 
 /// Generates a random seed for testing purposes
 public fun generate_seed_for_test(): vector<u8> {
-  let mut generator = new_generator_for_testing();
-  let mut seed = vector::empty<u8>();
-  let mut i = 0;
-  while (i < SEED_LENGTH) {
-    let byte = generator.generate_u8();
-    seed.push_back(byte);
-    i = i + 1;
-  };
-  seed
+  vector<u8>[
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+  ]
 }
