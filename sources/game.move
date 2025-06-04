@@ -247,7 +247,7 @@ public entry fun join(
   assert!(game.stage == GameStage::Waiting, EGameInProgress);
   assert!(payment.value() == game.buy_in, EBuyInMismatch);
   assert!(
-    game.seats.all!(|p| p.is_some_and!(|s| s.addr != player_addr)),
+    !game.seats.any!(|p| p.is_some_and!(|s| s.addr == player_addr)),
     EAlreadyJoined,
   );
   game.sit_to_seat(seat, player_addr, payment.value());
@@ -520,7 +520,8 @@ fun player_act(
   assert!(
     game.stage != GameStage::Waiting &&
     game.stage != GameStage::Ended &&
-    player.state == PlayerState::Active,
+    player.state != PlayerState::Folded &&
+    player.state != PlayerState::AllIn,
     EInvalidAction,
   );
 
@@ -573,14 +574,14 @@ fun player_act(
 
   // ====== System action after player acted =====
 
-  let (mut maybe_next_player, next_stage) = game.compute_next_stage();
+  let (maybe_next_player, next_stage) = game.compute_next_stage();
   // Set next player to active
   maybe_next_player.do_ref!(|i| {
     let p = game.seats.borrow_mut(*i).borrow_mut();
     p.state = PlayerState::Active;
   });
   // If game stage is changed, we need to advance the game stage
-  // if (next_stage != game.stage) advance_game_stage(game, next_stage);
+  if (next_stage != game.stage) advance_game_stage(game, next_stage);
 }
 
 fun compute_next_stage(game: &PokerGame): (Option<u64>, GameStage) {
@@ -604,7 +605,7 @@ fun compute_next_stage(game: &PokerGame): (Option<u64>, GameStage) {
       p.state == PlayerState::AllIn
     }))) {
     next_stage = GameStage::Showdown;
-    return (none(), next_stage);
+    return (none(), next_stage)
   };
 
   (maybe_next_player, next_stage)
@@ -624,7 +625,7 @@ fun advance_game_stage(game: &mut PokerGame, next_stage: GameStage) {
       game.stage = GameStage::Ended; // Set game stage to ended
       game.hand_played = game.hand_played + 1; // Increment hands played
       emit(GameEnded { game_id: game.id.to_inner() }); // Emit game ended event
-      return; // Exit early, no next stage after showdown
+      return // Exit early, no next stage after showdown
     },
     _ => { abort EInvalidGameState }, // Invalid state to advance
   };
@@ -750,11 +751,12 @@ fun distribute_pot(game: &mut PokerGame) {
 
   // Distribute side pots, same logic as main pot
   {
-    game.side_pots.do_mut!(|side_pot| {
+    let side_pots = game.side_pots; // Clone side pots to avoid mutating while iterating
+    side_pots.do!(|side_pot| {
       assert!(side_pot.winners.length() > 0, EInvalidAction); // Ensure there are winners
       let share = side_pot.amount / side_pot.winners.length();
       let mut changes = side_pot.amount % side_pot.winners.length();
-      side_pot.winners.do_mut!(|addr| {
+      side_pot.winners.do_ref!(|addr| {
         let seat_index = game.find_seat_index(*addr);
         let player = game.seats.borrow_mut(seat_index).borrow_mut();
         player.balance = player.balance + share; // Add share to player's balance
@@ -764,14 +766,13 @@ fun distribute_pot(game: &mut PokerGame) {
         };
       });
     });
-    assert!(game.side_pots.all!(|sp| sp.amount == 0), EInvalidAction); // All side pots should be empty after distribution
   };
 }
 
 // ===== Game helpers =====
 
 /// Walk through the seats starting from `from` index and return the index of the `step`-th occupied seat.
-fun walk_occupied_seat(game: &mut PokerGame, from: u64, step: u64): u64 {
+fun walk_occupied_seat(game: &PokerGame, from: u64, step: u64): u64 {
   let total_seats = game.seats.length();
   let mut walked = 0;
   let mut i = from; // Start walking from the given index
