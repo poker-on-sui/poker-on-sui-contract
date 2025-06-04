@@ -96,7 +96,7 @@ public struct HandRank has copy, drop, store {
 }
 
 /// Side pot information for all-in scenarios
-public struct SidePot has drop, store {
+public struct SidePot has copy, drop, store {
   amount: u64,
   eligible_players: vector<address>, // Player addresses eligible for this pot
   winners: vector<address>, // Players who won this side pot
@@ -205,7 +205,7 @@ public entry fun create(payment: Coin<SUI>, ctx: &mut TxContext): ID {
   // Check buy-in amount for creator
   assert!(buy_in >= MIN_BUY_IN, EInsufficientBuyIn);
 
-  let game = PokerGame {
+  let mut game = PokerGame {
     id,
     // ===== Game State =====
     seats: vector[],
@@ -345,7 +345,8 @@ entry fun withdraw(game: &mut PokerGame, ctx: &mut TxContext) {
     EInvalidGameState,
   );
   let player = ctx.sender();
-  let seat = game.seats.borrow_mut(game.find_seat_index(player));
+  let seat_index = game.find_seat_index(player);
+  let seat = game.seats.borrow_mut(seat_index);
   let p = seat.borrow_mut();
   let balance = p.balance;
   assert!(balance > 0, EInvalidAction); // Player must have winnings to withdraw
@@ -436,7 +437,8 @@ fun shuffle_deck(game: &mut PokerGame, seed: vector<u8>) {
 
 /// Set blinds by taking chips (balances) from the small blinds and big blinds players.
 fun set_blinds(game: &mut PokerGame) {
-  let sb_pos = game.walk_occupied_seat(game.dealer_position, 1); // Small blind is the next player after the dealer
+  let dealer_pos = game.dealer_position;
+  let sb_pos = game.walk_occupied_seat(dealer_pos, 1); // Small blind is the next player after the dealer
   let bb_pos = game.walk_occupied_seat(sb_pos, 1); // Big blind is the next occupied seat after small blind
   // Small blind
   let sb_amount = {
@@ -578,7 +580,7 @@ fun player_act(
     p.state = PlayerState::Active;
   });
   // If game stage is changed, we need to advance the game stage
-  if (next_stage != game.stage) advance_game_stage(game, next_stage);
+  // if (next_stage != game.stage) advance_game_stage(game, next_stage);
 }
 
 fun compute_next_stage(game: &PokerGame): (Option<u64>, GameStage) {
@@ -632,12 +634,13 @@ fun advance_game_stage(game: &mut PokerGame, next_stage: GameStage) {
     p.current_bet = 0; // Reset current bet for next round
   }));
   game.last_raise_position = none(); // Reset last raise position
-  let active_pos = game.walk_occupied_seat(game.dealer_position, 1); // First player to act is small blind
+  let dealer_position = game.dealer_position;
+  let active_pos = game.walk_occupied_seat(dealer_position, 1); // First player to act is small blind
   game.seats.borrow_mut(active_pos).do_mut!(|p| p.state = PlayerState::Active); // Set small blind player to active
   emit(RoundChanged { game_id: game.id.to_inner(), new_state: game.stage });
 }
 
-// Create side pots for all-in scenarios
+// // Create side pots for all-in scenarios
 fun check_and_create_side_pots(game: &mut PokerGame) {
   // If there are no all-in players, no side pots needed
   if (!game.seats.any!(|s| s.is_some_and!(|p| p.state == PlayerState::AllIn)))
@@ -699,7 +702,7 @@ fun identify_winners(game: &mut PokerGame) {
   let participants = game
     .seats
     .filter!(|s| s.is_some_and!(|p| p.state != PlayerState::Folded))
-    .map!(|s| s.borrow())
+    .map!(|s| s.destroy_some())
     .map!(|p| {
       let mut cards = vector<Card>[];
       p.cards.do_ref!(|c| cards.push_back(*c)); // Clone player's cards
@@ -709,18 +712,17 @@ fun identify_winners(game: &mut PokerGame) {
     });
   game.winners = determine_winners(&participants); // Set winners for the main pot
 
-  game.side_pots.do_mut!(|sp| {
-    let participants = sp
-      .eligible_players
-      .map!(|s| game.find_seat_index(s))
-      .map!(|i| game.seats.borrow_mut(i).borrow_mut())
-      .map!(|p| {
-        let mut cards = vector<Card>[];
-        p.cards.do_ref!(|c| cards.push_back(*c)); // Clone player's cards
-        game.community_cards.do_ref!(|c| cards.push_back(*c)); // Add community cards to player's hand
-        let hand_rank = evaluate_hand(&cards);
-        Participant { addr: p.addr, cards: cards, hand_rank }
-      });
+  let mut side_pots = game.side_pots;
+  side_pots.do_mut!(|sp| {
+    let participants = sp.eligible_players.map!(|participant| {
+      let seat_index = game.find_seat_index(participant);
+      let p = game.seats.borrow_mut(seat_index).borrow_mut();
+      let mut cards = vector<Card>[];
+      p.cards.do_ref!(|c| cards.push_back(*c)); // Clone player's cards
+      game.community_cards.do_ref!(|c| cards.push_back(*c)); // Add community cards to player's hand
+      let hand_rank = evaluate_hand(&cards);
+      Participant { addr: p.addr, cards: cards, hand_rank }
+    });
     sp.winners = determine_winners(&participants);
   });
 }
