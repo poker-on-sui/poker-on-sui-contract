@@ -32,7 +32,7 @@ const EInvalidPlayer: u64 = 0x0004;
 const EInvalidAction: u64 = 0x0005;
 // const EInvalidAmount: u64 = 0x0006;
 const EAlreadyJoined: u64 = 0x0009;
-// const ESeatOccupied: u64 = 0x000A;
+const ESeatOccupied: u64 = 0x000A;
 // const EInvalidSeat: u64 = 0x000B;
 const EInvalidSeed: u64 = 0x000C;
 const EInvalidGameState: u64 = 0x000D;
@@ -93,6 +93,17 @@ fun test_join_game_already_joined() {
 }
 
 #[test]
+#[expected_failure(abort_code = ESeatOccupied, location = game)]
+fun test_join_seat_occupied() {
+  let mut g = create_and_join_game_as(PLAYER0);
+
+  g.join_as(PLAYER1, 1); // Player 1 joins
+  g.join_as(PLAYER2, 1); // Player 2 tries to join to seat 1 again
+
+  ts::end(g);
+}
+
+#[test]
 fun test_start_game() {
   let mut g = create_and_join_game_as(PLAYER0);
 
@@ -100,7 +111,7 @@ fun test_start_game() {
   g.join_as(PLAYER1, 1);
   g.join_as(PLAYER2, 2);
 
-  // Total pot should be 3x buy-in
+  // Total treasury should be 3x buy-in
   g.inspect_as!(PLAYER0, |game| assert_eq(game.treasury_balance(), BUY_IN * 3));
 
   // PLAYER0 starts the game
