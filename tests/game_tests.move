@@ -3,7 +3,6 @@ module poker::game_tests;
 
 use poker::game;
 use poker::tests_utils::{Self, create_and_join_game_as};
-use std::debug;
 use sui::coin::mint_for_testing;
 use sui::sui::SUI;
 use sui::test_scenario as ts;
@@ -70,7 +69,7 @@ fun test_join_game_insufficient_buy_in() {
   // Player tries to join with insufficient funds
   scenario.act_as!(PLAYER1, |game| {
     let coin = mint_for_testing<SUI>(BUY_IN - 1, scenario.ctx()); // Less than required buy-in
-    game.join(coin, scenario.ctx());
+    game.join(coin, 0, scenario.ctx());
   });
 
   ts::end(scenario);
@@ -82,10 +81,10 @@ fun test_join_game_already_joined() {
   let mut g = create_and_join_game_as(PLAYER0);
 
   // Player 1 joins
-  g.join_as(PLAYER1);
+  g.join_as(PLAYER1, 1);
 
   // Player 1 tries to join again
-  g.join_as(PLAYER1);
+  g.join_as(PLAYER1, 2);
 
   ts::end(g);
 }
@@ -95,8 +94,8 @@ fun test_start_game() {
   let mut g = create_and_join_game_as(PLAYER0);
 
   // Add 2 players
-  g.join_as(PLAYER1);
-  g.join_as(PLAYER2);
+  g.join_as(PLAYER1, 1);
+  g.join_as(PLAYER2, 2);
 
   // Total pot should be 3x buy-in
   g.inspect_as!(PLAYER0, |game| assert_eq(game.treasury_balance(), BUY_IN * 3));
@@ -114,8 +113,8 @@ fun test_start_game_not_owner() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add 2 players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Player1 tries to start the game (not the owner)
   scenario.start_as(PLAYER1);
@@ -129,12 +128,12 @@ fun test_start_game_invalid_seed() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add 2 players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // PLAYER0 tries to start game with empty seed
   scenario.act_as!(PLAYER0, |game| {
-    game.start_game_with_seed_for_testing(vector[], scenario.ctx());
+    game.start_with_seed_for_testing(vector[], scenario.ctx());
   });
 
   ts::end(scenario);
@@ -145,10 +144,10 @@ fun test_player_actions() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add 4 players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
-  scenario.join_as(PLAYER3);
-  scenario.join_as(PLAYER4);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
+  scenario.join_as(PLAYER3, 3);
+  scenario.join_as(PLAYER4, 4);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -164,12 +163,35 @@ fun test_player_actions() {
 }
 
 #[test]
+fun test_find_next_actor() {
+  let mut scenario = create_and_join_game_as(PLAYER0);
+
+  // Add 4 players
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
+  scenario.join_as(PLAYER3, 3);
+  scenario.join_as(PLAYER4, 4);
+
+  // Start the game
+  scenario.start_as(PLAYER0);
+
+  // Test finding next actor after big blind
+  scenario.inspect_as!(PLAYER0, |game| {
+    let addr = game.get_active_player_addr();
+    assert!(addr.is_some()); // Should have an active player
+    assert_eq(addr.destroy_some(), PLAYER3); // Should be PLAYER3 (position 3)
+  });
+
+  ts::end(scenario);
+}
+
+#[test]
 fun test_full_game_flow() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add 2 players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -217,8 +239,8 @@ fun test_all_in_scenario() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add 2 players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -239,10 +261,10 @@ fun test_four_player_game_flow() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add 4 players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
-  scenario.join_as(PLAYER3);
-  scenario.join_as(PLAYER4);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
+  scenario.join_as(PLAYER3, 3);
+  scenario.join_as(PLAYER4, 4);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -286,10 +308,10 @@ fun test_four_player_all_in_scenario() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add 4 players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
-  scenario.join_as(PLAYER3);
-  scenario.join_as(PLAYER4);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
+  scenario.join_as(PLAYER3, 3);
+  scenario.join_as(PLAYER4, 4);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -314,8 +336,8 @@ fun test_hand_evaluation_integration() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Join 2 players to create a simple 3-player game
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Start the game to trigger hand evaluation logic
   scenario.start_as(PLAYER0);
@@ -352,8 +374,8 @@ fun test_side_pot_all_in_scenario() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add 2 players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -374,9 +396,9 @@ fun test_side_pot_multiple_all_ins() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add more players for complex side pot scenario
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
-  scenario.join_as(PLAYER3);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
+  scenario.join_as(PLAYER3, 3);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -440,8 +462,8 @@ fun test_dealer_rotation_multiple_hands() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Start first hand - PLAYER0 is dealer (position 0)
   scenario.start_as(PLAYER0);
@@ -482,8 +504,8 @@ fun test_successful_withdraw() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -505,7 +527,7 @@ fun test_withdraw_game_not_over() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add one player
-  scenario.join_as(PLAYER1);
+  scenario.join_as(PLAYER1, 1);
 
   // Try to withdraw before game starts (should fail)
   scenario.withdraw_as(PLAYER0);
@@ -519,9 +541,9 @@ fun test_withdraw_invalid_player() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add players and complete a game
-  scenario.join_as(PLAYER1);
+  scenario.join_as(PLAYER1, 1);
 
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER2, 2);
 
   // Start and complete the game
   scenario.start_as(PLAYER0);
@@ -545,8 +567,8 @@ fun test_withdraw_no_winnings() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Start and complete the game
   scenario.start_as(PLAYER0);
@@ -572,8 +594,8 @@ fun test_multiple_player_withdraw() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add players
-  scenario.join_as(PLAYER1);
-  scenario.join_as(PLAYER2);
+  scenario.join_as(PLAYER1, 1);
+  scenario.join_as(PLAYER2, 2);
 
   // Start the game
   scenario.start_as(PLAYER0);
@@ -614,7 +636,7 @@ fun test_withdraw_twice() {
   let mut scenario = create_and_join_game_as(PLAYER0);
 
   // Add one player
-  scenario.join_as(PLAYER1);
+  scenario.join_as(PLAYER1, 1);
 
   // Start the game
   scenario.start_as(PLAYER0);

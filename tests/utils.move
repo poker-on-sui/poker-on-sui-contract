@@ -57,10 +57,10 @@ use fun inspect_as as ts::Scenario.inspect_as;
 // ===== Player Actions Functions =====
 
 /// Joins a player to the poker game with the required buy-in
-public fun join_as(scenario: &mut Scenario, player: address) {
+public fun join_as(scenario: &mut Scenario, player: address, seat: u64) {
   scenario.act_as!(player, |game| {
     let coin = mint_for_testing<SUI>(game.buy_in(), scenario.ctx());
-    game.join(coin, scenario.ctx())
+    game.join(coin, seat, scenario.ctx())
   });
 }
 
@@ -68,7 +68,7 @@ public fun join_as(scenario: &mut Scenario, player: address) {
 public fun start_as(scenario: &mut Scenario, player: address) {
   scenario.act_as!(player, |game| {
     let seed = generate_seed_for_test();
-    game.start_game_with_seed_for_testing(seed, scenario.ctx());
+    game.start_with_seed_for_testing(seed, scenario.ctx());
   });
 }
 
