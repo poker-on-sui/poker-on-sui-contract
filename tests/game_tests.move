@@ -18,25 +18,31 @@ const PLAYER3: address = @0x3333;
 const PLAYER4: address = @0x4444;
 
 // Game configuration constants
-const BUY_IN: u64 = 1_000_000_000; // 0.1 SUI
-const MIN_BUY_IN: u64 = 100_000_000; // 0.1 SUI
-const MIN_BET: u64 = 50_000_000; // 5% of buy_in
+const MIN_BUY_IN: u64 = 10_000_000; // 0.01 SUI
+const MIN_BET: u64 = 500_000; // 5% of buy_in
 
 // Error codes from the poker module (only keeping used ones for warnings)
+const EInvalidGameState: u64 = 0x000B; // Internal errors
+const EGameInProgress: u64 = 0x0000;
+const EGameNotStarted: u64 = 0x0001;
+const EEInsufficientPlayer: u64 = 0x0002;
+const EInsufficientBuyIn: u64 = 0x0003;
+const EBuyInMismatch: u64 = 0x0004;
+const EInvalidPlayer: u64 = 0x0005;
+const EInvalidAction: u64 = 0x0006;
+const EInvalidAmount: u64 = 0x0007;
+const EAlreadyJoined: u64 = 0x0008;
+const ESeatOccupied: u64 = 0x0009;
+const EInvalidSeat: u64 = 0x000A;
 
-// const EGameInProgress: u64 = 0x0000;
-// const EInvalidPlayerCount: u64 = 0x0001;
-const EInsufficientBuyIn: u64 = 0x0002;
-const EBuyInMismatch: u64 = 0x0003;
-const EInvalidPlayer: u64 = 0x0004;
-const EInvalidAction: u64 = 0x0005;
-// const EInvalidAmount: u64 = 0x0006;
-const EAlreadyJoined: u64 = 0x0009;
-const ESeatOccupied: u64 = 0x000A;
-// const EInvalidSeat: u64 = 0x000B;
-const EInvalidSeed: u64 = 0x000C;
-const EInvalidGameState: u64 = 0x000D;
-// const EInvalidHandSize: u64 = 0x000E;
+// Player states
+const PlayerState_Waiting: u64 = 0;
+const PlayerState_Active: u64 = 1;
+// const PlayerState_Checked: u64 = 2;
+// const PlayerState_Called: u64 = 3;
+// const PlayerState_RaisedOrBetted: u64 = 4;
+const PlayerState_Folded: u64 = 5;
+// const PlayerState_AllIn: u64 = 6;
 
 // ===== Alias for game tests =====
 
@@ -71,7 +77,7 @@ fun test_join_game_insufficient_buy_in() {
 
   // Player tries to join with insufficient funds
   g.act_as!(PLAYER1, |game| {
-    let coin = mint_for_testing<SUI>(BUY_IN - 1, g.ctx()); // Less than required buy-in
+    let coin = mint_for_testing<SUI>(MIN_BUY_IN - 1, g.ctx()); // Less than required buy-in
     game.join(coin, 0, g.ctx());
   });
 
@@ -104,6 +110,17 @@ fun test_join_seat_occupied() {
 }
 
 #[test]
+#[expected_failure(abort_code = EInvalidSeat, location = game)]
+fun test_join_invalid_seat() {
+  let mut g = create_and_join_game_as(PLAYER0);
+
+  g.join_as(PLAYER1, 1); // Player 1 joins
+  g.join_as(PLAYER2, 9); // Player 2 tries to join to seat 9 (invalid seat)
+
+  ts::end(g);
+}
+
+#[test]
 fun test_start_game() {
   let mut g = create_and_join_game_as(PLAYER0);
 
@@ -112,7 +129,10 @@ fun test_start_game() {
   g.join_as(PLAYER2, 2);
 
   // Total treasury should be 3x buy-in
-  g.inspect_as!(PLAYER0, |game| assert_eq(game.treasury_balance(), BUY_IN * 3));
+  g.inspect_as!(
+    PLAYER0,
+    |game| assert_eq(game.treasury_balance(), MIN_BUY_IN * 3),
+  );
 
   // PLAYER0 starts the game
   g.start_as(PLAYER0);
@@ -137,7 +157,7 @@ fun test_start_game_not_owner() {
 }
 
 #[test]
-#[expected_failure(abort_code = EInvalidSeed, location = game)]
+#[expected_failure(abort_code = EInvalidGameState, location = game)]
 fun test_start_game_invalid_seed() {
   let mut g = create_and_join_game_as(PLAYER0);
 
@@ -149,6 +169,17 @@ fun test_start_game_invalid_seed() {
   g.act_as!(PLAYER0, |game| {
     game.start_with_seed_for_testing(vector[], g.ctx());
   });
+
+  ts::end(g);
+}
+
+#[test]
+#[expected_failure(abort_code = EEInsufficientPlayer, location = game)]
+fun test_start_game_not_enough_player() {
+  let mut g = create_and_join_game_as(PLAYER0);
+
+  // PLAYER0 starts the game
+  g.start_as(PLAYER0);
 
   ts::end(g);
 }
@@ -177,6 +208,72 @@ fun test_player_actions() {
 }
 
 #[test]
+#[expected_failure(abort_code = EGameNotStarted, location = game)]
+fun test_act_before_start() {
+  let mut g = create_and_join_game_as(PLAYER0);
+
+  // Add 4 players
+  g.join_as(PLAYER1, 1);
+  g.join_as(PLAYER2, 2);
+
+  g.fold_as(PLAYER2); // Player 2 tries to fold before game starts
+
+  ts::end(g);
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidPlayer, location = game)]
+fun test_act_not_in_game() {
+  let mut g = create_and_join_game_as(PLAYER0);
+
+  // Add players
+  g.join_as(PLAYER1, 1);
+  g.join_as(PLAYER2, 2);
+
+  // Start the game
+  g.start_as(PLAYER0);
+
+  g.fold_as(PLAYER3); // Player 3 tries to fold but is not in the game
+
+  ts::end(g);
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidAction, location = game)]
+fun test_act_not_in_turn() {
+  let mut g = create_and_join_game_as(PLAYER0);
+
+  // Add players
+  g.join_as(PLAYER1, 1);
+  g.join_as(PLAYER2, 2);
+
+  // Start the game
+  g.start_as(PLAYER0);
+
+  g.fold_as(PLAYER1); // Active player is PLAYER0 (dealer), PLAYER1 tries to fold out of turn
+
+  ts::end(g);
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidAmount, location = game)]
+fun test_raise_invalid() {
+  let mut g = create_and_join_game_as(PLAYER0);
+
+  // Add players
+  g.join_as(PLAYER1, 1);
+  g.join_as(PLAYER2, 2);
+
+  // Start the game
+  g.start_as(PLAYER0);
+
+  g.raise_as(PLAYER0, MIN_BET * 2); // PLAYER0 raises to x2 the minimum bet
+  g.raise_as(PLAYER1, MIN_BET / 2); // PLAYER1 tries to raise less than minimum bet (should fail)
+
+  ts::end(g);
+}
+
+#[test]
 fun test_find_next_actor() {
   let mut g = create_and_join_game_as(PLAYER0);
 
@@ -189,11 +286,15 @@ fun test_find_next_actor() {
   // Start the game
   g.start_as(PLAYER0);
 
+  g.fold_as(PLAYER3); // Player 3 folds
+  g.fold_as(PLAYER4); // Player 4 folds
+  g.call_as(PLAYER0); // Dealer calls
+
   // Test finding next actor after big blind
   g.inspect_as!(PLAYER0, |game| {
-    let addr = game.get_active_player_addr();
+    let addr = game.test_find_next_actor(0);
     assert!(addr.is_some()); // Should have an active player
-    assert_eq(addr.destroy_some(), PLAYER3); // Should be PLAYER3 (position 3)
+    assert_eq(*addr.borrow(), 1); // Should be PLAYER1
   });
 
   ts::end(g);
@@ -233,14 +334,21 @@ fun test_full_game_flow() {
   g.inspect_as!(PLAYER0, |game| {
     // Check game state after all actions
     assert!(game.is_ended()); // Game should be over
-    assert_eq(game.treasury_balance(), BUY_IN * 3); // Total pot should be 3x buy-in
-    let player0_balance = game.get_player_balance(PLAYER0);
-    let player1_balance = game.get_player_balance(PLAYER1);
-    let player2_balance = game.get_player_balance(PLAYER2);
-    let total_balance = player0_balance + player1_balance + player2_balance;
-    assert_eq(total_balance, game.treasury_balance()); // Total balance should match treasury
+    assert_eq(game.treasury_balance(), MIN_BUY_IN * 3); // Total pot should be 3x buy-in
+    let player0 = game.get_player(PLAYER0);
+    let player1 = game.get_player(PLAYER1);
+    let player2 = game.get_player(PLAYER2);
+    let treasury_balance = game.treasury_balance();
+    // poker::debug::print_debug(b"ℹ️ Player 0: ", player0);
+    // poker::debug::print_debug(b"ℹ️ Player 1: ", player1);
+    // poker::debug::print_debug(b"ℹ️ Player 2: ", player2);
+    // poker::debug::print_debug(b"ℹ️ Treasury balance: ", &treasury_balance);
+    // poker::debug::print_debug(b"ℹ️ Pot: ", &game.get_pot());
+    let total_balance =
+      player0.balance() + player1.balance() + player2.balance();
+    assert_eq(total_balance, treasury_balance); // Total balance should match treasury
     assert!(
-      player0_balance >= BUY_IN || player1_balance >= BUY_IN || player2_balance >= BUY_IN,
+      player0.balance() >= MIN_BUY_IN || player1.balance() >= MIN_BUY_IN || player2.balance() >= MIN_BUY_IN,
     ); // At least one player should have winnings
     assert_eq(game.side_pots_count(), 0); // No side pots in this simple game
   });
@@ -249,7 +357,7 @@ fun test_full_game_flow() {
 }
 
 #[test]
-fun test_all_in_g() {
+fun test_all_ins() {
   let mut g = create_and_join_game_as(PLAYER0);
 
   // Add 2 players
@@ -260,12 +368,16 @@ fun test_all_in_g() {
   g.start_as(PLAYER0);
 
   // PLAYER0 goes all-in pre-flop (first to act in 3-player)
-  g.raise_as(PLAYER0, BUY_IN);
+  g.raise_as(PLAYER0, MIN_BUY_IN);
   g.call_as(PLAYER1);
+  // g.inspect_as!(PLAYER0, |game| print_debug(b"ℹ️ Current game state: ", game));
   g.call_as(PLAYER2);
 
-  // This should automatically advance to showdown
-  // TODO: check that the game state is correct after all-in
+  // This should automatically advance to showdown and end the game
+  g.inspect_as!(PLAYER0, |game| {
+    // print_debug(b"ℹ️ Current game state: ", game);
+    assert!(game.is_ended());
+  });
 
   ts::end(g);
 }
@@ -331,7 +443,7 @@ fun test_four_player_all_in_g() {
   g.start_as(PLAYER0);
 
   // PLAYER3 goes all-in pre-flop (first to act in 5-player game)
-  g.raise_as(PLAYER3, BUY_IN);
+  g.raise_as(PLAYER3, MIN_BUY_IN);
   g.call_as(PLAYER4);
   g.call_as(PLAYER0);
   g.call_as(PLAYER1);
@@ -395,7 +507,7 @@ fun test_side_pot_all_in_g() {
   g.start_as(PLAYER0);
 
   // PLAYER0 goes all-in pre-flop (first to act in 3-player)
-  g.raise_as(PLAYER0, BUY_IN); // Raise to all-in
+  g.raise_as(PLAYER0, MIN_BUY_IN); // Raise to all-in
   g.call_as(PLAYER1); // Player1 calls
   g.call_as(PLAYER2); // Player2 calls
 
@@ -432,7 +544,7 @@ fun test_side_pot_multiple_all_ins() {
   // PLAYER1 (first to act post-flop) bets a smaller amount
   {
     // Bet half of remaining balance to leave room for raises
-    let remaining_balance = BUY_IN - MIN_BET * 4;
+    let remaining_balance = MIN_BUY_IN - MIN_BET * 4;
     let bet_amount = remaining_balance / 2;
     g.raise_as(PLAYER1, bet_amount);
   };
@@ -440,7 +552,7 @@ fun test_side_pot_multiple_all_ins() {
   // PLAYER2 raises to a larger amount
   {
     // Raise to 3/4 of remaining balance
-    let remaining_balance = BUY_IN - MIN_BET * 4;
+    let remaining_balance = MIN_BUY_IN - MIN_BET * 4;
     let raise_amount = (remaining_balance * 3) / 4;
     g.raise_as(PLAYER2, raise_amount);
   };
@@ -448,7 +560,7 @@ fun test_side_pot_multiple_all_ins() {
   // PLAYER3 goes all-in
   {
     // Go all-in with all remaining balance
-    let remaining_balance = BUY_IN - MIN_BET * 4;
+    let remaining_balance = MIN_BUY_IN - MIN_BET * 4;
     g.raise_as(PLAYER3, remaining_balance);
   };
 
@@ -476,37 +588,78 @@ fun test_dealer_rotation_multiple_hands() {
   let mut g = create_and_join_game_as(PLAYER0);
 
   // Add players
-  g.join_as(PLAYER1, 1);
-  g.join_as(PLAYER2, 2);
+  g.join_as(PLAYER1, 2);
+  g.join_as(PLAYER2, 5);
 
   // Start first hand - PLAYER0 is dealer (position 0)
   g.start_as(PLAYER0);
 
-  // Fast forward to game over state for first hand
+  // Verify player statuses
+  g.inspect_as!(PLAYER0, |game| {
+    assert_eq(game.dealer_position(), 0); // Dealer should be PLAYER0 which is in seat #0
+    assert_eq(game.get_player_state(PLAYER0), PlayerState_Active);
+    assert_eq(game.get_player_state(PLAYER1), PlayerState_Waiting);
+    assert_eq(game.get_player_state(PLAYER2), PlayerState_Waiting);
+  });
+
   g.fold_as(PLAYER0);
+
+  // Verify player statuses
+  g.inspect_as!(PLAYER0, |game| {
+    assert_eq(game.get_player_state(PLAYER0), PlayerState_Folded);
+    assert_eq(game.get_player_state(PLAYER1), PlayerState_Active);
+    assert_eq(game.get_player_state(PLAYER2), PlayerState_Waiting);
+  });
+
   g.fold_as(PLAYER1);
 
   // PLAYER2 wins by default (only one left)
   // Game should now be in STATE_GAME_OVER
+  g.inspect_as!(PLAYER0, |game| {
+    assert!(game.is_ended())
+  });
 
   // Start new hand with rotated dealer - should be PLAYER1 (position 1)
   g.start_as(PLAYER0);
 
-  // Verify dealer has rotated by checking blind positions
-  // In second hand: PLAYER1 is dealer, PLAYER2 is small blind, PLAYER0 is big blind
-  // We can verify this by checking who needs to post blinds and act first
+  // // Verify dealer has rotated by checking blind positions
+  // // In second hand: PLAYER1 is dealer, PLAYER2 is small blind, PLAYER0 is big blind
+  // // We can verify this by checking who needs to post blinds and act first
   g.inspect_as!(PLAYER0, |game| {
-    assert_eq(game.dealer_position(), 1);
+    assert_eq(game.dealer_position(), 2); // Dealer should be PLAYER1 which is in seat #2
+    assert_eq(game.get_player_state(PLAYER0), PlayerState_Waiting);
+    assert_eq(game.get_player_state(PLAYER1), PlayerState_Active);
+    assert_eq(game.get_player_state(PLAYER2), PlayerState_Waiting);
   });
 
-  // Fast forward second hand to test third hand rotation
-  // In second hand: PLAYER1 is dealer, PLAYER2 is SB, PLAYER0 is BB
-  // First to act pre-flop is PLAYER1 (dealer acts first in 3-player when big blind is posted)
+  // // Fast forward second hand to test third hand rotation
+  // // In second hand: PLAYER1 is dealer, PLAYER2 is SB, PLAYER0 is BB
+  // // First to act pre-flop is PLAYER1 (dealer acts first in 3-player when big blind is posted)
   g.fold_as(PLAYER1);
+
+  g.inspect_as!(PLAYER0, |game| {
+    // print_debug(b"ℹ️ Current seats: ", game.get_seats());
+    assert_eq(game.get_player_state(PLAYER0), PlayerState_Waiting);
+    assert_eq(game.get_player_state(PLAYER1), PlayerState_Folded);
+    assert_eq(game.get_player_state(PLAYER2), PlayerState_Active);
+  });
+
   g.fold_as(PLAYER2);
 
-  // Start third hand - dealer should now be PLAYER2 (position 2)
+  g.inspect_as!(PLAYER0, |game| {
+    assert!(game.is_ended())
+  });
+
+  // // Start third hand - dealer should now be PLAYER2 (position 5)
   g.start_as(PLAYER0);
+
+  g.inspect_as!(PLAYER0, |game| {
+    // print_debug(b"ℹ️ Current seats: ", game.get_seats());
+    assert_eq(game.dealer_position(), 5); // Dealer should be PLAYER2 which is in seat #5
+    assert_eq(game.get_player_state(PLAYER0), PlayerState_Waiting);
+    assert_eq(game.get_player_state(PLAYER1), PlayerState_Waiting);
+    assert_eq(game.get_player_state(PLAYER2), PlayerState_Active);
+  });
 
   ts::end(g);
 }
@@ -536,12 +689,15 @@ fun test_successful_withdraw() {
 }
 
 #[test]
-#[expected_failure(abort_code = EInvalidGameState)]
+#[expected_failure(abort_code = EGameInProgress, location = game)]
 fun test_withdraw_game_not_over() {
   let mut g = create_and_join_game_as(PLAYER0);
 
   // Add one player
   g.join_as(PLAYER1, 1);
+
+  // Start the game
+  g.start_as(PLAYER0);
 
   // Try to withdraw before game starts (should fail)
   g.withdraw_as(PLAYER0);
@@ -550,7 +706,7 @@ fun test_withdraw_game_not_over() {
 }
 
 #[test]
-#[expected_failure(abort_code = EInvalidPlayer)]
+#[expected_failure(abort_code = EInvalidPlayer, location = game)]
 fun test_withdraw_invalid_player() {
   let mut g = create_and_join_game_as(PLAYER0);
 
@@ -576,7 +732,6 @@ fun test_withdraw_invalid_player() {
 }
 
 #[test]
-#[expected_failure(abort_code = EInvalidAction)]
 fun test_withdraw_no_winnings() {
   let mut g = create_and_join_game_as(PLAYER0);
 
@@ -588,7 +743,7 @@ fun test_withdraw_no_winnings() {
   g.start_as(PLAYER0);
 
   // Complete game - PLAYER0 wins, others lose
-  g.raise_as(PLAYER0, BUY_IN); // PLAYER0 goes all-in
+  g.raise_as(PLAYER0, MIN_BUY_IN); // PLAYER0 goes all-in
   g.call_as(PLAYER1);
   g.fold_as(PLAYER2);
 
@@ -645,7 +800,7 @@ fun test_multiple_player_withdraw() {
 }
 
 #[test]
-#[expected_failure(abort_code = EInvalidAction)]
+#[expected_failure(abort_code = EInvalidPlayer, location = game)]
 fun test_withdraw_twice() {
   let mut g = create_and_join_game_as(PLAYER0);
 
@@ -661,7 +816,7 @@ fun test_withdraw_twice() {
   // First withdrawal (should succeed)
   g.withdraw_as(PLAYER0);
 
-  // Second withdrawal attempt (should fail with EInvalidAction)
+  // Second withdrawal attempt (should fail with EInvalidPlayer)
   g.withdraw_as(PLAYER0);
 
   ts::end(g);

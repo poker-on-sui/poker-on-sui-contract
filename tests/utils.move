@@ -7,8 +7,7 @@ use sui::sui::SUI;
 use sui::test_scenario::{Self as ts, Scenario};
 
 // Game configuration constants
-const BUY_IN: u64 = 1_000_000_000; // 1 SUI
-// const SEED_LENGTH: u64 = 32;
+const BUY_IN: u64 = 10_000_000; // 0.01 SUI
 
 /// Creates a new poker game and returns a test scenario with the creator automatically joined
 public fun create_and_join_game_as(player: address): Scenario {
