@@ -1,6 +1,5 @@
 module poker::game;
 
-use poker::debug::print_debug;
 use std::option::{some, none};
 use sui::balance::Balance;
 use sui::coin::Coin;
@@ -311,15 +310,15 @@ fun start_with_seed(game: &mut PokerGame, seed: vector<u8>, ctx: &TxContext) {
   game.best_hand = none(); // Reset best hand
   game.winners = vector[]; // Reset winners
 
-  print_debug(b"🚀 Game started with seed: ", &seed);
-  print_debug(b"» Player count: ", &game.seats.count!(|s| s.is_some()));
-  print_debug(b"» Dealer position: ", &game.dealer_position);
-  print_debug(b"» Min bet: ", &game.min_bet);
-  print_debug(b"💰 Pot", &game.pot);
-  print_debug(
-    b"👤 Players: ",
-    &game.seats.filter!(|s| s.is_some()).map!(|s| s.destroy_some()),
-  );
+  // print_debug(b"🚀 Game started with seed: ", &seed);
+  // print_debug(b"» Player count: ", &game.seats.count!(|s| s.is_some()));
+  // print_debug(b"» Dealer position: ", &game.dealer_position);
+  // print_debug(b"» Min bet: ", &game.min_bet);
+  // print_debug(b"💰 Pot", &game.pot);
+  // print_debug(
+  //   b"👤 Players: ",
+  //   &game.seats.filter!(|s| s.is_some()).map!(|s| s.destroy_some()),
+  // );
 
   // Emit event
   emit(GameStarted { game_id: game.id.to_inner(), num_players: player_count });
@@ -609,8 +608,8 @@ fun player_act(
     },
   };
 
-  print_debug(b"🏓 Player: ", player);
-  print_debug(b"acted:", action);
+  // print_debug(b"🏓 Player: ", player);
+  // print_debug(b"acted:", action);
   emit(PlayerMoved {
     game_id: game.id.to_inner(),
     player: player.addr,
@@ -625,7 +624,7 @@ fun player_act(
     let next_player = maybe_next_player.destroy_some();
     let p = game.seats.borrow_mut(next_player).borrow_mut();
     p.state = PlayerState::Active;
-    print_debug(b"➡️ Next player is: ", &next_player);
+    // print_debug(b"➡️ Next player is: ", &next_player);
   } else {
     // No next player found, round is complete
     let next_stage = compute_next_stage(game);
@@ -669,7 +668,7 @@ fun advance_game_stage(game: &mut PokerGame, next_stage: GameStage) {
       game.stage = GameStage::Ended;
       game.hand_played = game.hand_played + 1;
       emit(GameEnded { game_id: game.id.to_inner() });
-      print_debug(b"🏆 Game ended, hand played:", &game.hand_played);
+      // print_debug(b"🏆 Game ended, hand played:", &game.hand_played);
       return // Exit early, no next stage after showdown
     },
     _ => { abort EInvalidGameState }, // Invalid state to advance
@@ -688,9 +687,9 @@ fun advance_game_stage(game: &mut PokerGame, next_stage: GameStage) {
   let active_pos = game.seats.walk_active_seat(dealer_position, 1); // First player to act is small blind
   game.seats.borrow_mut(active_pos).do_mut!(|p| p.state = PlayerState::Active); // Set small blind player to active
   emit(RoundChanged { game_id: game.id.to_inner(), new_state: game.stage });
-  print_debug(b"🎲 Game stage advanced to: ", &next_stage);
-  print_debug(b"💰 Pot: ", &game.pot);
-  print_debug(b"➡️ Active Player: ", &game.seats[active_pos].borrow().addr);
+  // print_debug(b"🎲 Game stage advanced to: ", &next_stage);
+  // print_debug(b"💰 Pot: ", &game.pot);
+  // print_debug(b"➡️ Active Player: ", &game.seats[active_pos].borrow().addr);
 }
 
 // // Create side pots for all-in scenarios
@@ -712,19 +711,19 @@ fun check_and_create_side_pots(game: &mut PokerGame) {
   // Sort bet levels in ascending order
   bet_levels.merge_sort_by!(|a, b| *a < *b);
 
-  print_debug(b"📊 Bet levels: ", &bet_levels);
-  print_debug(
-    b"👤 Players: ",
-    &game.seats.filter!(|s| s.is_some()).map!(|s| s.destroy_some()),
-  );
+  // print_debug(b"📊 Bet levels: ", &bet_levels);
+  // print_debug(
+  //   b"👤 Players: ",
+  //   &game.seats.filter!(|s| s.is_some()).map!(|s| s.destroy_some()),
+  // );
 
   let mut i = 0;
   while (i < bet_levels.length()) {
     let level = bet_levels[i];
     let prev_lv = if (i == 0) none() else some(bet_levels[i - 1]);
     let contrib = if (prev_lv.is_some()) level - *prev_lv.borrow() else level; // Contribution is the difference to previous level
-    print_debug(b"💰 Creating side pot for bet level", &level);
-    print_debug(b"Previous level: ", &prev_lv);
+    // print_debug(b"💰 Creating side pot for bet level", &level);
+    // print_debug(b"Previous level: ", &prev_lv);
 
     let eligible_players = game.seats.filter!(|s| {
       s.is_some_and!(|p| {
@@ -739,8 +738,8 @@ fun check_and_create_side_pots(game: &mut PokerGame) {
       winners: vector[],
       best_hand: none(),
     };
-    print_debug(b"💰 Main pot:", &game.pot);
-    print_debug(b"💰 Side pot created:", &side_pot);
+    // print_debug(b"💰 Main pot:", &game.pot);
+    // print_debug(b"💰 Side pot created:", &side_pot);
     game.pot = game.pot - side_pot.amount; // Reduce main pot by side pot amount
     game.side_pots.push_back(side_pot);
     i = i + 1;
@@ -768,7 +767,7 @@ fun deal_community_cards(game: &mut PokerGame, count: u64) {
 fun identify_winners(game: &mut PokerGame) {
   // Identify winners for the main pot
   {
-    print_debug(b"🏁 Identifying winners for the main pot", &game.seats);
+    // print_debug(b"🏁 Identifying winners for the main pot", &game.seats);
     let participants = game
       .seats
       .filter!(|s| s.is_some_and!(|p| p.state != PlayerState::Folded))
@@ -782,14 +781,14 @@ fun identify_winners(game: &mut PokerGame) {
       });
     if (participants.length() == 1) {
       game.winners = vector[participants[0].addr]; // Only one participant, they win by default
-      print_debug(b"🏆 All other folded, winner is:", &game.winners);
+      // print_debug(b"🏆 All other folded, winner is:", &game.winners);
     } else {
-      print_debug(b"⚔️ Showdown stage", &participants);
+      // print_debug(b"⚔️ Showdown stage", &participants);
       let (winners, best_hand) = determine_winners(&participants);
       game.winners = winners;
       game.best_hand = best_hand;
-      print_debug(b"🏆 Winners identified:", &game.winners);
-      print_debug(b"🎩 Best hand:", &game.best_hand);
+      // print_debug(b"🏆 Winners identified:", &game.winners);
+      // print_debug(b"🎩 Best hand:", &game.best_hand);
     }
   };
 
@@ -808,8 +807,8 @@ fun identify_winners(game: &mut PokerGame) {
         Participant { addr: p.addr, cards: cards, hand_rank }
       });
       let (winners, best_hand) = determine_winners(&participants);
-      print_debug(b"💰 Side pot winners identified: ", &winners);
-      print_debug(b"🎩 Side pot best hand: ", &best_hand);
+      // print_debug(b"💰 Side pot winners identified: ", &winners);
+      // print_debug(b"🎩 Side pot best hand: ", &best_hand);
       game.side_pots[i].winners = winners;
       game.side_pots[i].best_hand = best_hand;
       i = i + 1;
@@ -821,7 +820,7 @@ fun identify_winners(game: &mut PokerGame) {
 fun distribute_pot(game: &mut PokerGame) {
   // Distribute main pot
   if (game.pot > 0) {
-    print_debug(b"💰 Distributing main pot: ", &game.pot);
+    // print_debug(b"💰 Distributing main pot: ", &game.pot);
     assert!(game.winners.length() > 0, EInvalidGameState); // Should have winners
     let share = game.pot / game.winners.length();
     let mut changes = game.pot % game.winners.length(); // Remainder if pot cannot be evenly divided
@@ -843,7 +842,7 @@ fun distribute_pot(game: &mut PokerGame) {
   if (game.side_pots.length() > 0) {
     let side_pots = game.side_pots; // Clone side pots to avoid mutating while iterating
     side_pots.do!(|side_pot| {
-      print_debug(b"💰 Distributing side pot: ", &side_pot);
+      // print_debug(b"💰 Distributing side pot: ", &side_pot);
       assert!(side_pot.winners.length() > 0, EInvalidGameState); // Ensure there are winners
       let share = side_pot.amount / side_pot.winners.length();
       let mut changes = side_pot.amount % side_pot.winners.length();
@@ -946,7 +945,7 @@ fun find_next_actor(game: &PokerGame, from_seat: u64): Option<u64> {
     seat = (seat + 1) % total_seats; // Move to next seat
     i = i + 1;
   };
-  print_debug(b"ℹ️ Total active seats: ", &total_active_seats);
+  // print_debug(b"ℹ️ Total active seats: ", &total_active_seats);
 
   // If only one player is left, check for special case
   if (next_seat.is_some() && total_active_seats == 1) {
@@ -956,10 +955,10 @@ fun find_next_actor(game: &PokerGame, from_seat: u64): Option<u64> {
       .map!(|s| *s.borrow());
     // If all other players have folded or gone all-in, no further action needed
     if (other_players.all!(|p| p.state == PlayerState::Folded)) {
-      print_debug(
-        b"ℹ️ Only one player left, no next action needed.",
-        &next_player.addr,
-      );
+      // print_debug(
+      //   b"ℹ️ Only one player left, no next action needed.",
+      //   &next_player.addr,
+      // );
       return none()
     };
   };
@@ -1013,7 +1012,7 @@ fun evaluate_hand(cards: &vector<Card>): HandRank {
   };
 
   // Sort ranks for easier evaluation
-  sort_ranks(&mut ranks);
+  ranks.merge_sort_by!(|a, b| *a > *b); // Sort ranks in descending order (highest first)
 
   // Check for flush
   let flush_suit = check_flush(&suits);
@@ -1164,22 +1163,6 @@ fun compare_hands(hand1: &HandRank, hand2: &HandRank): Option<bool> {
 
 // ===== Hand Evaluation Helper Functions =====
 
-/// Sort ranks in descending order (highest first)
-fun sort_ranks(ranks: &mut vector<u8>) {
-  let len = ranks.length();
-  let mut i = 0;
-  while (i < len) {
-    let mut j = i + 1;
-    while (j < len) {
-      if (*ranks.borrow(i) < *ranks.borrow(j)) {
-        ranks.swap(i, j);
-      };
-      j = j + 1;
-    };
-    i = i + 1;
-  };
-}
-
 /// Check for flush and return the suit (255 if no flush)
 fun check_flush(suits: &vector<u8>): u8 {
   let mut suit_counts = vector[0u8, 0u8, 0u8, 0u8]; // Hearts, Diamonds, Clubs, Spades
@@ -1216,7 +1199,7 @@ fun check_straight(ranks: &vector<u8>): u8 {
     i = i + 1;
   };
 
-  sort_ranks(&mut unique_ranks);
+  unique_ranks.merge_sort_by!(|a, b| *a > *b); // Sort ranks in descending order (highest first)
 
   // Check for 5 consecutive cards
   let unique_length = unique_ranks.length();
@@ -1386,7 +1369,7 @@ fun get_flush_kickers(
     i = i + 1;
   };
 
-  sort_ranks(&mut flush_cards);
+  flush_cards.merge_sort_by!(|a, b| *a > *b); // Sort cards in descending order (highest first)
 
   // Take top 5 cards
   let mut kickers = vector[];
@@ -1413,7 +1396,7 @@ fun get_high_card_kickers(ranks: &vector<u8>): vector<u8> {
     i = i + 1;
   };
 
-  sort_ranks(&mut unique_ranks);
+  unique_ranks.merge_sort_by!(|a, b| *a > *b); // Sort ranks in descending order (highest first)
 
   // Take top 5
   let mut kickers = vector[];
@@ -1448,33 +1431,31 @@ fun compare_kickers(
 
 #[test_only]
 /// [Test Only] Get the game stage
-public fun is_ended(game: &PokerGame): bool {
-  game.stage == GameStage::Ended
-}
+public fun is_ended(game: &PokerGame): bool { game.stage == GameStage::Ended }
 
 #[test_only]
 /// [Test Only] Get the player state
-public fun addr(player: &Player): address { player.addr }
+public fun get_addr(player: &Player): address { player.addr }
 
 #[test_only]
 /// [Test Only] Get the player state
-public fun balance(player: &Player): u64 { player.balance }
+public fun get_balance(player: &Player): u64 { player.balance }
 
 #[test_only]
 /// [Test Only] Get the game stage
-public fun buy_in(game: &PokerGame): u64 { game.buy_in }
+public fun get_buy_in(game: &PokerGame): u64 { game.buy_in }
 
 #[test_only]
 /// [Test Only] Get the game stage
-public fun dealer_position(game: &PokerGame): u64 { game.dealer_position }
+public fun get_dealer_position(game: &PokerGame): u64 { game.dealer_position }
 
 #[test_only]
 /// [Test Only] Get the game stage
-public fun treasury_balance(game: &PokerGame): u64 { game.treasury.value() }
+public fun get_treasury_balance(game: &PokerGame): u64 { game.treasury.value() }
 
 #[test_only]
 /// [Test Only] Get the game stage
-public fun side_pots_count(game: &PokerGame): u64 {
+public fun get_side_pots_count(game: &PokerGame): u64 {
   game.side_pots.length()
 }
 
@@ -1487,13 +1468,6 @@ public fun get_pot(game: &PokerGame): u64 { game.pot }
 public fun get_player(game: &PokerGame, player: address): &Player {
   let player_index = find_seat_index(game, player);
   game.seats.borrow(player_index).borrow()
-}
-
-#[test_only]
-/// [Test Only] Get the game stage
-public fun get_player_balance(game: &PokerGame, player: address): u64 {
-  let player_index = find_seat_index(game, player);
-  game.seats.borrow(player_index).borrow().balance
 }
 
 #[test_only]
@@ -1527,9 +1501,4 @@ public entry fun get_player_state(game: &PokerGame, player: address): u64 {
     PlayerState::Folded => 5,
     PlayerState::AllIn => 6,
   }
-}
-
-#[test_only]
-public fun get_seats(game: &PokerGame): &vector<Option<Player>> {
-  &game.seats
 }

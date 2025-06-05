@@ -58,7 +58,7 @@ use fun inspect_as as ts::Scenario.inspect_as;
 /// Joins a player to the poker game with the required buy-in
 public fun join_as(scenario: &mut Scenario, player: address, seat: u64) {
   scenario.act_as!(player, |game| {
-    let coin = mint_for_testing<SUI>(game.buy_in(), scenario.ctx());
+    let coin = mint_for_testing<SUI>(game.get_buy_in(), scenario.ctx());
     game.join(coin, seat, scenario.ctx())
   });
 }

@@ -1,7 +1,7 @@
 #[test_only]
 module poker::game_tests;
 
-use poker::debug::print_debug;
+// use poker::debug::print_debug;
 use poker::game;
 use poker::tests_utils::{Self, create_and_join_game_as};
 use sui::coin::mint_for_testing;
@@ -131,7 +131,7 @@ fun test_start_game() {
   // Total treasury should be 3x buy-in
   g.inspect_as!(
     PLAYER0,
-    |game| assert_eq(game.treasury_balance(), MIN_BUY_IN * 3),
+    |game| assert_eq(game.get_treasury_balance(), MIN_BUY_IN * 3),
   );
 
   // PLAYER0 starts the game
@@ -354,23 +354,23 @@ fun test_full_game_flow() {
   g.inspect_as!(PLAYER0, |game| {
     // Check game state after all actions
     assert!(game.is_ended()); // Game should be over
-    assert_eq(game.treasury_balance(), MIN_BUY_IN * 3); // Total pot should be 3x buy-in
+    assert_eq(game.get_treasury_balance(), MIN_BUY_IN * 3); // Total pot should be 3x buy-in
     let player0 = game.get_player(PLAYER0);
     let player1 = game.get_player(PLAYER1);
     let player2 = game.get_player(PLAYER2);
-    let treasury_balance = game.treasury_balance();
+    let treasury_balance = game.get_treasury_balance();
     // poker::debug::print_debug(b"ℹ️ Player 0: ", player0);
     // poker::debug::print_debug(b"ℹ️ Player 1: ", player1);
     // poker::debug::print_debug(b"ℹ️ Player 2: ", player2);
     // poker::debug::print_debug(b"ℹ️ Treasury balance: ", &treasury_balance);
     // poker::debug::print_debug(b"ℹ️ Pot: ", &game.get_pot());
     let total_balance =
-      player0.balance() + player1.balance() + player2.balance();
+      player0.get_balance() + player1.get_balance() + player2.get_balance();
     assert_eq(total_balance, treasury_balance); // Total balance should match treasury
     assert!(
-      player0.balance() >= MIN_BUY_IN || player1.balance() >= MIN_BUY_IN || player2.balance() >= MIN_BUY_IN,
+      player0.get_balance() >= MIN_BUY_IN || player1.get_balance() >= MIN_BUY_IN || player2.get_balance() >= MIN_BUY_IN,
     ); // At least one player should have winnings
-    assert_eq(game.side_pots_count(), 0); // No side pots in this simple game
+    assert_eq(game.get_side_pots_count(), 0); // No side pots in this simple game
   });
 
   ts::end(g);
@@ -446,7 +446,7 @@ fun test_four_player_game_flow() {
   // Game should be over now with PLAYER1, PLAYER3, and PLAYER4 remaining
   g.inspect_as!(PLAYER0, |game| {
     assert_eq(game.is_ended(), true);
-    assert_eq(game.treasury_balance(), MIN_BUY_IN * 5); // Total pot should be 5x buy-in
+    assert_eq(game.get_treasury_balance(), MIN_BUY_IN * 5); // Total pot should be 5x buy-in
     let player0 = game.get_player(PLAYER0);
     let player1 = game.get_player(PLAYER1);
     let player2 = game.get_player(PLAYER2);
@@ -454,10 +454,10 @@ fun test_four_player_game_flow() {
     let player4 = game.get_player(PLAYER4);
     let players = vector[*player0, *player1, *player2, *player3, *player4];
     let total_balance =
-      player0.balance() + player1.balance() + player2.balance() +
-      player3.balance() + player4.balance();
-    assert_eq(total_balance, game.treasury_balance()); // Total balance should match treasury
-    assert!(players.count!(|p| p.balance() > 0) >= 1); // At least one player should have winnings
+      player0.get_balance() + player1.get_balance() + player2.get_balance() +
+      player3.get_balance() + player4.get_balance();
+    assert_eq(total_balance, game.get_treasury_balance()); // Total balance should match treasury
+    assert!(players.count!(|p| p.get_balance() > 0) >= 1); // At least one player should have winnings
   });
 
   ts::end(g);
@@ -486,7 +486,7 @@ fun test_four_player_all_in() {
   // This should automatically advance to showdown with all players all-in
   g.inspect_as!(PLAYER0, |game| {
     assert!(game.is_ended());
-    assert_eq(game.treasury_balance(), MIN_BUY_IN * 5); // Total pot should be 5x buy-in
+    assert_eq(game.get_treasury_balance(), MIN_BUY_IN * 5); // Total pot should be 5x buy-in
     let player0 = game.get_player(PLAYER0);
     let player1 = game.get_player(PLAYER1);
     let player2 = game.get_player(PLAYER2);
@@ -494,17 +494,17 @@ fun test_four_player_all_in() {
     let player4 = game.get_player(PLAYER4);
     let players = vector[*player0, *player1, *player2, *player3, *player4];
     let total_balance =
-      player0.balance() + player1.balance() + player2.balance() +
-      player3.balance() + player4.balance();
-    assert_eq(total_balance, game.treasury_balance()); // Total balance should match treasury
+      player0.get_balance() + player1.get_balance() + player2.get_balance() +
+      player3.get_balance() + player4.get_balance();
+    assert_eq(total_balance, game.get_treasury_balance()); // Total balance should match treasury
     // poker::debug::print_debug(b"ℹ️ Player 0: ", player0);
     // poker::debug::print_debug(b"ℹ️ Player 1: ", player1);
     // poker::debug::print_debug(b"ℹ️ Player 2: ", player2);
     // poker::debug::print_debug(b"ℹ️ Player 3: ", player3);
     // poker::debug::print_debug(b"ℹ️ Player 4: ", player4);
     // poker::debug::print_debug(b"ℹ️ Pot: ", &game.get_pot());
-    assert_eq(players.count!(|p| p.balance() > 0), 1); // Only one player should have winnings
-    assert_eq(game.side_pots_count(), 0); // No side pots in this simple game
+    assert_eq(players.count!(|p| p.get_balance() > 0), 1); // Only one player should have winnings
+    assert_eq(game.get_side_pots_count(), 0); // No side pots in this simple game
     assert_eq(game.get_pot(), 0); // Pot should be empty after all-in
   });
 
@@ -548,15 +548,15 @@ fun test_hand_evaluation_integration() {
   // This test ensures the hand evaluation system integrates properly without errors
   g.inspect_as!(PLAYER0, |game| {
     assert!(game.is_ended()); // Game should be over
-    assert_eq(game.treasury_balance(), MIN_BUY_IN * 3); // Total pot should be 3x buy-in
+    assert_eq(game.get_treasury_balance(), MIN_BUY_IN * 3); // Total pot should be 3x buy-in
     let player0 = game.get_player(PLAYER0);
     let player1 = game.get_player(PLAYER1);
     let player2 = game.get_player(PLAYER2);
     let players = vector[*player0, *player1, *player2];
     let total_balance =
-      player0.balance() + player1.balance() + player2.balance();
-    assert_eq(total_balance, game.treasury_balance()); // Total balance should match treasury
-    assert!(players.count!(|p| p.balance() > 0) >= 1); // At least one player should have winnings
+      player0.get_balance() + player1.get_balance() + player2.get_balance();
+    assert_eq(total_balance, game.get_treasury_balance()); // Total balance should match treasury
+    assert!(players.count!(|p| p.get_balance() > 0) >= 1); // At least one player should have winnings
   });
 
   ts::end(g);
@@ -603,12 +603,12 @@ fun test_side_pot_all_in() {
     let player1 = game.get_player(PLAYER1);
     let player2 = game.get_player(PLAYER2);
     // Check balances after game ends
-    assert_eq(player0.balance(), p0_balance);
-    assert_eq(player1.balance(), p1_balance);
-    assert_eq(player2.balance(), p2_balance);
-    print_debug(b"ℹ️ Player 0: ", player0);
-    print_debug(b"ℹ️ Player 1: ", player1);
-    print_debug(b"ℹ️ Player 2: ", player2);
+    assert_eq(player0.get_balance(), p0_balance);
+    assert_eq(player1.get_balance(), p1_balance);
+    assert_eq(player2.get_balance(), p2_balance);
+    // print_debug(b"ℹ️ Player 0: ", player0);
+    // print_debug(b"ℹ️ Player 1: ", player1);
+    // print_debug(b"ℹ️ Player 2: ", player2);
   });
   g.start_as(PLAYER0);
   // Flop
@@ -620,13 +620,13 @@ fun test_side_pot_all_in() {
   g.inspect_as!(PLAYER0, |game| {
     // Check game state after all players are all-in
     assert!(game.is_ended()); // Game should be over
-    assert_eq(game.side_pots_count(), 2); // Should have 2 side pots
-    let player0 = game.get_player(PLAYER0);
-    let player1 = game.get_player(PLAYER1);
-    let player2 = game.get_player(PLAYER2);
-    print_debug(b"ℹ️ Player 0: ", player0);
-    print_debug(b"ℹ️ Player 1: ", player1);
-    print_debug(b"ℹ️ Player 2: ", player2);
+    assert_eq(game.get_side_pots_count(), 2); // Should have 2 side pots
+    // let player0 = game.get_player(PLAYER0);
+    // let player1 = game.get_player(PLAYER1);
+    // let player2 = game.get_player(PLAYER2);
+    // print_debug(b"ℹ️ Player 0: ", player0);
+    // print_debug(b"ℹ️ Player 1: ", player1);
+    // print_debug(b"ℹ️ Player 2: ", player2);
   });
 
   ts::end(g);
@@ -711,7 +711,7 @@ fun test_dealer_rotation_multiple_hands() {
 
   // Verify player statuses
   g.inspect_as!(PLAYER0, |game| {
-    assert_eq(game.dealer_position(), 0); // Dealer should be PLAYER0 which is in seat #0
+    assert_eq(game.get_dealer_position(), 0); // Dealer should be PLAYER0 which is in seat #0
     assert_eq(game.get_player_state(PLAYER0), PlayerState_Active);
     assert_eq(game.get_player_state(PLAYER1), PlayerState_Waiting);
     assert_eq(game.get_player_state(PLAYER2), PlayerState_Waiting);
@@ -741,7 +741,7 @@ fun test_dealer_rotation_multiple_hands() {
   // // In second hand: PLAYER1 is dealer, PLAYER2 is small blind, PLAYER0 is big blind
   // // We can verify this by checking who needs to post blinds and act first
   g.inspect_as!(PLAYER0, |game| {
-    assert_eq(game.dealer_position(), 2); // Dealer should be PLAYER1 which is in seat #2
+    assert_eq(game.get_dealer_position(), 2); // Dealer should be PLAYER1 which is in seat #2
     assert_eq(game.get_player_state(PLAYER0), PlayerState_Waiting);
     assert_eq(game.get_player_state(PLAYER1), PlayerState_Active);
     assert_eq(game.get_player_state(PLAYER2), PlayerState_Waiting);
@@ -753,7 +753,6 @@ fun test_dealer_rotation_multiple_hands() {
   g.fold_as(PLAYER1);
 
   g.inspect_as!(PLAYER0, |game| {
-    // print_debug(b"ℹ️ Current seats: ", game.get_seats());
     assert_eq(game.get_player_state(PLAYER0), PlayerState_Waiting);
     assert_eq(game.get_player_state(PLAYER1), PlayerState_Folded);
     assert_eq(game.get_player_state(PLAYER2), PlayerState_Active);
@@ -769,8 +768,7 @@ fun test_dealer_rotation_multiple_hands() {
   g.start_as(PLAYER0);
 
   g.inspect_as!(PLAYER0, |game| {
-    // print_debug(b"ℹ️ Current seats: ", game.get_seats());
-    assert_eq(game.dealer_position(), 5); // Dealer should be PLAYER2 which is in seat #5
+    assert_eq(game.get_dealer_position(), 5); // Dealer should be PLAYER2 which is in seat #5
     assert_eq(game.get_player_state(PLAYER0), PlayerState_Waiting);
     assert_eq(game.get_player_state(PLAYER1), PlayerState_Waiting);
     assert_eq(game.get_player_state(PLAYER2), PlayerState_Active);
