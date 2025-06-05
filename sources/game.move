@@ -100,6 +100,7 @@ public struct SidePot has copy, drop, store {
   amount: u64,
   eligible_players: vector<address>, // Player addresses eligible for this pot
   winners: vector<address>, // Players who won this side pot
+  best_hand: Option<HandRank>, // Best hand for this side pot, if applicable
 }
 
 /// Player in the game
@@ -152,6 +153,8 @@ public struct PokerGame has key {
   last_raise_position: Option<u64>,
   /// Addresses of players who won the main pot of current hand
   winners: vector<address>,
+  /// Best hand rank of the game
+  best_hand: Option<HandRank>,
   // ================ Game Configuration ================
   /// Buy-in amount for the game
   buy_in: u64,
@@ -218,6 +221,7 @@ public entry fun create(payment: Coin<SUI>, ctx: &mut TxContext): ID {
     dealer_position: 0,
     last_raise_position: none(),
     winners: vector[],
+    best_hand: none(),
     // ===== Game Configuration =====
     buy_in,
     min_bet,
@@ -306,6 +310,8 @@ fun start_with_seed(game: &mut PokerGame, seed: vector<u8>, ctx: &TxContext) {
   game.seats[active_pos].do_mut!(|p| p.state = PlayerState::Active); // Set them to active
   game.last_raise_position = none(); // Reset last raise position
   game.stage = GameStage::PreFlop; // Advance to pre-flop stage
+  game.best_hand = none(); // Reset best hand
+  game.winners = vector[]; // Reset winners
 
   print_debug(b"🚀 Game started with seed: ", &seed);
   print_debug(b"» Player count: ", &game.seats.count!(|s| s.is_some()));
@@ -646,6 +652,7 @@ fun advance_game_stage(game: &mut PokerGame, next_stage: GameStage) {
       game.hand_played = game.hand_played + 1; // Increment hands played
       emit(GameEnded { game_id: game.id.to_inner() }); // Emit game ended event
       print_debug(b"🏆 Game ended, winners: ", &game.winners);
+      print_debug(b"♦️ Community cards: ", &game.community_cards);
       return // Exit early, no next stage after showdown
     },
     _ => { abort EInvalidGameState }, // Invalid state to advance
@@ -696,6 +703,7 @@ fun check_and_create_side_pots(game: &mut PokerGame) {
       eligible_players,
       amount: 0,
       winners: vector[],
+      best_hand: none(),
     };
     game.seats.do_mut!(|s| s.do_mut!(|p| {
       if (!eligible_players.contains(&p.addr)) return; // Skip if player not eligible for this side pot
@@ -732,19 +740,25 @@ fun deal_community_cards(game: &mut PokerGame, count: u64) {
 }
 
 fun identify_winners(game: &mut PokerGame) {
-  let participants = game
-    .seats
-    .filter!(|s| s.is_some_and!(|p| p.state != PlayerState::Folded))
-    .map!(|s| {
-      let p = s.borrow();
-      let mut cards = vector<Card>[];
-      p.cards.do_ref!(|c| cards.push_back(*c)); // Add player's cards
-      game.community_cards.do_ref!(|c| cards.push_back(*c)); // Add community cards to player's hand
-      let hand_rank = evaluate_hand(&cards);
-      Participant { addr: p.addr, cards: cards, hand_rank }
-    });
-  game.winners = determine_winners(&participants); // Set winners for the main pot
-  print_debug(b"🏆 Winners identified: ", &game.winners);
+  // Identify winners for the main pot
+  {
+    let participants = game
+      .seats
+      .filter!(|s| s.is_some_and!(|p| p.state != PlayerState::Folded))
+      .map!(|s| {
+        let p = s.borrow();
+        let mut cards = vector<Card>[];
+        p.cards.do_ref!(|c| cards.push_back(*c)); // Add player's cards
+        game.community_cards.do_ref!(|c| cards.push_back(*c)); // Add community cards to player's hand
+        let hand_rank = evaluate_hand(&cards);
+        Participant { addr: p.addr, cards: cards, hand_rank }
+      });
+    let (winners, best_hand) = determine_winners(&participants);
+    game.winners = winners;
+    game.best_hand = best_hand;
+    print_debug(b"🏆 Winners identified: ", &game.winners);
+    print_debug(b"🏆 Best hand: ", &game.best_hand);
+  };
 
   let mut side_pots = game.side_pots;
   side_pots.do_mut!(|sp| {
@@ -757,8 +771,11 @@ fun identify_winners(game: &mut PokerGame) {
       let hand_rank = evaluate_hand(&cards);
       Participant { addr: p.addr, cards: cards, hand_rank }
     });
-    sp.winners = determine_winners(&participants);
+    let (winners, best_hand) = determine_winners(&participants);
+    sp.winners = winners; // Set winners for the side pot
+    sp.best_hand = best_hand; // Set best hand for the side pot
     print_debug(b"💰 Side pot winners identified: ", &sp.winners);
+    print_debug(b"💰 Side pot best hand: ", &sp.best_hand);
   });
 }
 
@@ -877,27 +894,30 @@ fun find_next_actor(game: &PokerGame, from_seat: u64): Option<u64> {
 // ===== Hand Evaluation Functions =====
 
 /// Determine the winners of the game based on players' hands
-fun determine_winners(players: &vector<Participant>): vector<address> {
+fun determine_winners(
+  players: &vector<Participant>,
+): (vector<address>, Option<HandRank>) {
   // For each side pot, find the best hand among eligible players
   let mut best_rank: Option<HandRank> = none();
-  let mut losers = vector<address>[];
+  let mut winners = vector<address>[];
   players.do_ref!(|p| {
     let rank = evaluate_hand(&p.cards);
 
-    // If no best rank yet, set it to current hand rank
+    // If no best rank yet, assume current player's hand is the best
     if (best_rank.is_none()) best_rank = some(rank);
 
     let result = compare_hands(&rank, best_rank.borrow());
-    if (result.is_none() || result.borrow() == true) {
-      // If hand is equal or better, update best hand
+    if (result.is_none()) {
+      // If hand is tied, add to winners
+      winners.push_back(p.addr);
+    } else if (result.destroy_some()) {
+      // If current player's hand is better, reset winners and best rank
+      winners = vector[p.addr];
       best_rank = some(rank);
-    } else {
-      // If current hand is worse, add to losers
-      losers.push_back(p.addr);
     };
   });
 
-  (*players).filter!(|p| !losers.contains(&p.addr)).map!(|p| p.addr)
+  (winners, best_rank)
 }
 
 /// Evaluate a 7-card hand (5 community + 2 hole cards) and return the best 5-card hand
