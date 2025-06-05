@@ -1,6 +1,7 @@
 #[test_only]
 module poker::game_tests;
 
+use poker::debug::print_debug;
 use poker::game;
 use poker::tests_utils::{Self, create_and_join_game_as};
 use sui::coin::mint_for_testing;
@@ -55,7 +56,6 @@ use fun tests_utils::raise_as as ts::Scenario.raise_as;
 use fun tests_utils::withdraw_as as ts::Scenario.withdraw_as;
 use fun tests_utils::act_as as ts::Scenario.act_as;
 use fun tests_utils::inspect_as as ts::Scenario.inspect_as;
-
 // ===== Game tests =====
 
 #[test]
@@ -269,6 +269,26 @@ fun test_raise_invalid() {
 
   g.raise_as(PLAYER0, MIN_BET * 2); // PLAYER0 raises to x2 the minimum bet
   g.raise_as(PLAYER1, MIN_BET / 2); // PLAYER1 tries to raise less than minimum bet (should fail)
+
+  ts::end(g);
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidAction, location = game)]
+fun test_raise_invalid_all_in() {
+  let mut g = create_and_join_game_as(PLAYER0);
+
+  // Add players
+  g.join_as(PLAYER1, 1);
+  g.join_as(PLAYER2, 2);
+  g.join_as(PLAYER3, 7);
+
+  // Start the game
+  g.start_as(PLAYER0);
+
+  g.raise_as(PLAYER0, MIN_BUY_IN); // PLAYER0 all-ins
+  g.call_as(PLAYER1);
+  g.raise_as(PLAYER2, MIN_BET); // PLAYER2 raises (should fail since others are all-in)
 
   ts::end(g);
 }
@@ -543,8 +563,11 @@ fun test_hand_evaluation_integration() {
 }
 
 #[test]
-fun test_side_pot_all_in_g() {
+fun test_side_pot_all_in() {
   let mut g = create_and_join_game_as(PLAYER0);
+  let mut p0_balance = MIN_BUY_IN;
+  let mut p1_balance = MIN_BUY_IN;
+  let mut p2_balance = MIN_BUY_IN;
 
   // Add 2 players
   g.join_as(PLAYER1, 1);
@@ -552,14 +575,59 @@ fun test_side_pot_all_in_g() {
 
   // Start the game
   g.start_as(PLAYER0);
-
-  // PLAYER0 goes all-in pre-flop (first to act in 3-player)
-  g.raise_as(PLAYER0, MIN_BUY_IN); // Raise to all-in
-  g.call_as(PLAYER1); // Player1 calls
-  g.call_as(PLAYER2); // Player2 calls
+  p1_balance = p1_balance - MIN_BET / 2; // small blind
+  p2_balance = p2_balance - MIN_BET; // big blind
+  // Pre-flop
+  g.call_as(PLAYER0);
+  p0_balance = p0_balance - MIN_BET;
+  g.call_as(PLAYER1);
+  p1_balance = p1_balance - MIN_BET / 2;
+  g.check_as(PLAYER2);
+  // Flop
+  g.check_as(PLAYER1); // First to act post-flop (small blind)
+  g.raise_as(PLAYER2, MIN_BET); // Big blind
+  p2_balance = p2_balance - MIN_BET;
+  g.call_as(PLAYER0); // Dealer calls
+  p0_balance = p0_balance - MIN_BET;
+  g.fold_as(PLAYER1); // Player1 folds
+  // Turn
+  g.check_as(PLAYER2);
+  g.raise_as(PLAYER0, MIN_BET);
+  p0_balance = p0_balance - MIN_BET;
+  g.fold_as(PLAYER2);
+  p0_balance = p0_balance + MIN_BET * 6; // Player0 wins the pot
+  // No more players left to act, so the game should end here
+  g.inspect_as!(PLAYER0, |game| {
+    assert!(game.is_ended()); // Game should be over
+    let player0 = game.get_player(PLAYER0);
+    let player1 = game.get_player(PLAYER1);
+    let player2 = game.get_player(PLAYER2);
+    // Check balances after game ends
+    assert_eq(player0.balance(), p0_balance);
+    assert_eq(player1.balance(), p1_balance);
+    assert_eq(player2.balance(), p2_balance);
+    print_debug(b"ℹ️ Player 0: ", player0);
+    print_debug(b"ℹ️ Player 1: ", player1);
+    print_debug(b"ℹ️ Player 2: ", player2);
+  });
+  g.start_as(PLAYER0);
+  // Flop
+  g.raise_as(PLAYER1, p1_balance); // Player1 goes all-in
+  g.call_as(PLAYER2); // Player2 calls (all-in)
+  g.call_as(PLAYER0); // Player0 calls
 
   // This should automatically advance to showdown
-  // TODO: check that side pot logic is correctly handled
+  g.inspect_as!(PLAYER0, |game| {
+    // Check game state after all players are all-in
+    assert!(game.is_ended()); // Game should be over
+    assert_eq(game.side_pots_count(), 2); // Should have 2 side pots
+    let player0 = game.get_player(PLAYER0);
+    let player1 = game.get_player(PLAYER1);
+    let player2 = game.get_player(PLAYER2);
+    print_debug(b"ℹ️ Player 0: ", player0);
+    print_debug(b"ℹ️ Player 1: ", player1);
+    print_debug(b"ℹ️ Player 2: ", player2);
+  });
 
   ts::end(g);
 }
