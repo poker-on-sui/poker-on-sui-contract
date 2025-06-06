@@ -1,7 +1,6 @@
 #[test_only]
 module poker::game_tests;
 
-// use poker::debug::print_debug;
 use poker::game;
 use poker::tests_utils::{Self, create_and_join_game_as};
 use sui::coin::mint_for_testing;
@@ -142,7 +141,6 @@ fun test_start_game() {
 
 #[test]
 #[expected_failure(abort_code = EInvalidPlayer, location = game)]
-// EInvalidPlayer from poker module
 fun test_start_game_not_owner() {
   let mut g = create_and_join_game_as(PLAYER0);
 
@@ -641,59 +639,82 @@ fun test_side_pot_multiple_all_ins() {
   g.join_as(PLAYER2, 2);
   g.join_as(PLAYER3, 3);
 
-  // Start the game
+  // ===== Game 1: Player1 wins with no showdown =====
   g.start_as(PLAYER0);
-
-  // Create g with different all-in amounts
   // Pre-flop: PLAYER0 (dealer), PLAYER1 (SB), PLAYER2 (BB), PLAYER3 first to act
-
-  // PLAYER3 raises significantly
   g.raise_as(PLAYER3, MIN_BET * 4); // Raise to 4x min bet
   g.call_as(PLAYER0);
   g.call_as(PLAYER1);
   g.call_as(PLAYER2); // PLAYER2 calls to complete pre-flop
-
-  // Now in post-flop, create different all-in amounts to test side pots
-  // Test g: Have players bet/call different amounts to go all-in
-
-  // PLAYER1 (first to act post-flop) bets a smaller amount
-  {
-    // Bet half of remaining balance to leave room for raises
-    let remaining_balance = MIN_BUY_IN - MIN_BET * 4;
-    let bet_amount = remaining_balance / 2;
-    g.raise_as(PLAYER1, bet_amount);
-  };
-
-  // PLAYER2 raises to a larger amount
-  {
-    // Raise to 3/4 of remaining balance
-    let remaining_balance = MIN_BUY_IN - MIN_BET * 4;
-    let raise_amount = (remaining_balance * 3) / 4;
-    g.raise_as(PLAYER2, raise_amount);
-  };
-
-  // PLAYER3 goes all-in
-  {
-    // Go all-in with all remaining balance
-    let remaining_balance = MIN_BUY_IN - MIN_BET * 4;
-    g.raise_as(PLAYER3, remaining_balance);
-  };
-
-  // PLAYER0 calls to see the action through to showdown
+  // Flop: PLAYER1 (SB) first to act
+  g.raise_as(PLAYER1, MIN_BET);
+  g.fold_as(PLAYER2);
+  g.fold_as(PLAYER3);
+  g.fold_as(PLAYER0);
+  // At this point, PLAYER1 wins the pot with no showdown. Balance updates:
+  let mut p0_balance = MIN_BUY_IN - MIN_BET * 4; // PLAYER0's balance after pre-flop
+  let mut p1_balance = MIN_BUY_IN + MIN_BET * 4 * 3; // PLAYER1's balance after pre-flop
+  let mut p2_balance = MIN_BUY_IN - MIN_BET * 4; // PLAYER2's balance after pre-flop
+  let mut p3_balance = MIN_BUY_IN - MIN_BET * 4; // PLAYER3's balance after pre-flop
+  // PLAYER1 wins the pot with no showdown
+  g.inspect_as!(PLAYER0, |game| {
+    assert!(game.is_ended()); // Game should be over
+    assert_eq(game.get_player(PLAYER0).get_balance(), p0_balance);
+    assert_eq(game.get_player(PLAYER1).get_balance(), p1_balance);
+    assert_eq(game.get_player(PLAYER2).get_balance(), p2_balance);
+    assert_eq(game.get_player(PLAYER3).get_balance(), p3_balance);
+  });
+  // ===== Game 2: Player 2 win with no showdown =====
+  g.start_as(PLAYER0);
+  // Pre-flop: PLAYER1 (dealer), PLAYER2 (SB), PLAYER3 (BB), PLAYER0 first to act
   g.call_as(PLAYER0);
-
-  // Verify the game handled multiple all-ins correctly by checking game state
-  // The game should automatically proceed through remaining streets and showdown
-  // Multiple side pots should be created based on different all-in amounts
-  g.inspect_as!(PLAYER0, |_game| {});
-
-  // At this point, the game should have created multiple side pots:
-  // - Main pot: Available to all players (up to PLAYER1's all-in amount)
-  // - Side pot 1: Available to PLAYER2, PLAYER3, PLAYER0 (up to PLAYER3's amount)
-  // - Side pot 2: Available to PLAYER2 and PLAYER0 (remaining amount)
-
-  // The game will automatically proceed through remaining betting rounds and showdown
-  // TODO: Testing that the side pot logic handles complex multi-player gs correctly
+  g.call_as(PLAYER1);
+  g.raise_as(PLAYER2, MIN_BET / 2 + MIN_BET * 5); // PLAYER2 called big blind and raises to 2x min bet
+  g.call_as(PLAYER3);
+  g.call_as(PLAYER0);
+  g.fold_as(PLAYER1);
+  // Flop: PLAYER2 (SB) first to act
+  g.check_as(PLAYER2);
+  g.raise_as(PLAYER3, MIN_BET * 8); // PLAYER3 raises
+  g.fold_as(PLAYER0);
+  g.fold_as(PLAYER2);
+  // At this point, PLAYER3 wins the pot with no showdown. Balance updates:
+  p0_balance = p0_balance - MIN_BET * 6; // Called big blind and a raise by PLAYER2
+  p1_balance = p1_balance - MIN_BET; // Called big blind and folded
+  p2_balance = p2_balance - MIN_BET * 6; // PLAYER2 raise but folded
+  p3_balance = p3_balance + MIN_BET * 13; // PLAYER3 wins the pot
+  // PLAYER3 wins the pot with no showdown
+  g.inspect_as!(PLAYER0, |game| {
+    assert!(game.is_ended()); // Game should be over
+    assert_eq(game.get_player(PLAYER0).get_balance(), p0_balance); // 5_000_000
+    assert_eq(game.get_player(PLAYER1).get_balance(), p1_balance); // 15_500_000
+    assert_eq(game.get_player(PLAYER2).get_balance(), p2_balance); // 5_000_000
+    assert_eq(game.get_player(PLAYER3).get_balance(), p3_balance); // 14_500_000
+    // poker::debug::print_debug(b"ℹ️ Player 0: ", game.get_player(PLAYER0));
+    // poker::debug::print_debug(b"ℹ️ Player 1: ", game.get_player(PLAYER1));
+    // poker::debug::print_debug(b"ℹ️ Player 2: ", game.get_player(PLAYER2));
+    // poker::debug::print_debug(b"ℹ️ Player 3: ", game.get_player(PLAYER3));
+    // poker::debug::print_debug(
+    //   b"ℹ️ Total: ",
+    //   &(p0_balance + p1_balance + p2_balance + p3_balance),
+    // );
+  });
+  // ===== Game 3: All player all-in =====
+  g.start_as(PLAYER0);
+  // Pre-flop: PLAYER2 (dealer), PLAYER3 (SB), PLAYER0 (BB), PLAYER1 first to act
+  g.call_as(PLAYER1);
+  p1_balance = p1_balance - MIN_BET;
+  g.raise_as(PLAYER2, p2_balance); // PLAYER2 all-ins
+  g.call_as(PLAYER3); // PLAYER3 calls
+  g.call_as(PLAYER0); // PLAYER0 calls - also all-in
+  g.raise_as(PLAYER1, p1_balance); // PLAYER1 all-ins
+  g.call_as(PLAYER3); // PLAYER3 calls again, also all-in
+  // At this point, all players are all-in and the game should automatically proceed to showdown
+  g.inspect_as!(PLAYER0, |game| {
+    assert!(game.is_ended()); // Game should be over
+    assert_eq(game.get_side_pots_count(), 3); // Should have 3 side pots
+    // poker::debug::print_debug(b"ℹ️ Game state: ", game);
+  });
 
   ts::end(g);
 }

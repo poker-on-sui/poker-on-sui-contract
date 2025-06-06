@@ -300,15 +300,11 @@ fun start_with_seed(game: &mut PokerGame, seed: vector<u8>, ctx: &TxContext) {
 
   game.set_dealer_position();
   game.reset_player_status();
+  game.reset_game_state();
   game.set_blinds();
   game.initialize_deck();
   game.shuffle_deck(seed);
   game.deal_cards();
-
-  game.last_raise_position = none(); // Reset last raise position
-  game.stage = GameStage::PreFlop; // Advance to pre-flop stage
-  game.best_hand = none(); // Reset best hand
-  game.winners = vector[]; // Reset winners
 
   // print_debug(b"🚀 Game started with seed: ", &seed);
   // print_debug(b"» Player count: ", &game.seats.count!(|s| s.is_some()));
@@ -510,6 +506,18 @@ fun deal_cards(game: &mut PokerGame) {
     seat = game.seats.walk_occupied_seat(seat, 1); // Move to the next occupied seat
     i = i + 1;
   };
+}
+
+/// Reset the game state for a new hand.
+fun reset_game_state(game: &mut PokerGame) {
+  game.community_cards = vector[];
+  game.pot = 0;
+  game.side_pots = vector[];
+  game.current_bet = 0;
+  game.stage = GameStage::PreFlop;
+  game.last_raise_position = none();
+  game.winners = vector[];
+  game.best_hand = none();
 }
 
 fun sit_to_seat(
